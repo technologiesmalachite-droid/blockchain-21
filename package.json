@@ -1,0 +1,22 @@
+{
+  "name": "malachitex-platform",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:frontend dev:backend",
+    "dev:frontend": "npm --workspace frontend run dev",
+    "dev:backend": "npm --workspace backend run dev",
+    "build": "npm --workspace frontend run build && npm --workspace backend run build",
+    "start": "npm-run-all --parallel start:frontend start:backend",
+    "start:frontend": "npm --workspace frontend run start",
+    "start:backend": "npm --workspace backend run start"
+  },
+  "devDependencies": {
+    "npm-run-all": "^4.1.5"
+  }
+}
+

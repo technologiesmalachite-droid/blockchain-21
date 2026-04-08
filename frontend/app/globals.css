@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html[data-theme="dim"] body {
+  background:
+    radial-gradient(circle at top right, rgba(240, 185, 11, 0.08), transparent 30%),
+    linear-gradient(180deg, #08101a 0%, #0b1320 100%);
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(22, 196, 127, 0.12), transparent 28%),
+    linear-gradient(180deg, #0b0f19 0%, #090d16 100%);
+  color: #f9fafb;
+}
+
+* {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+@keyframes marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+

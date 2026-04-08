@@ -1,0 +1,10 @@
+node_modules
+.next
+.next-dev
+.next-prod
+dist
+build
+.env
+.env.local
+coverage
+*.log
