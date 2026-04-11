@@ -14,8 +14,15 @@ const parseOrigins = (value) =>
     .map((entry) => entry.trim())
     .filter(Boolean);
 
+const parsePatterns = (value) =>
+  (value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
 const configuredClientUrls = parseOrigins(process.env.CLIENT_URLS);
 const fallbackClientUrls = parseOrigins(process.env.CLIENT_URL);
+const configuredClientPatterns = parsePatterns(process.env.CLIENT_URL_PATTERNS);
 const nodeEnv = process.env.NODE_ENV || "development";
 const developmentClientUrls = ["http://localhost:3000", "http://localhost:3001"];
 
@@ -33,6 +40,7 @@ export const env = {
   port: Number(process.env.PORT || 5000),
   nodeEnv,
   clientUrls: resolvedClientUrls,
+  clientUrlPatterns: configuredClientPatterns,
   jwtSecret: process.env.JWT_SECRET || "replace_with_secure_jwt_secret",
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || "replace_with_secure_refresh_secret",
   encryptionKey: process.env.ENCRYPTION_KEY || "replace_with_32_byte_encryption_key",

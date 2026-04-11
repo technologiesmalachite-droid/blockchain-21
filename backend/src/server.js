@@ -17,12 +17,40 @@ import { secureErrorHandler } from "./middleware/security.js";
 
 const app = express();
 const allowedOrigins = new Set(env.clientUrls);
+const allowedOriginPatterns = env.clientUrlPatterns;
+
+const matchesPattern = (origin, pattern) => {
+  if (!pattern || !origin) {
+    return false;
+  }
+
+  if (!pattern.includes("*")) {
+    return origin === pattern;
+  }
+
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  const regex = new RegExp(`^${escaped}$`, "i");
+  return regex.test(origin);
+};
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) {
+    return true;
+  }
+
+  if (allowedOrigins.has(origin)) {
+    return true;
+  }
+
+  return allowedOriginPatterns.some((pattern) => matchesPattern(origin, pattern));
+};
 
 app.use(helmet());
+app.set("trust proxy", 1);
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.has(origin)) {
+      if (isAllowedOrigin(origin)) {
         callback(null, true);
         return;
       }
@@ -48,6 +76,21 @@ app.get("/api/health", (_req, res) => {
     status: "ok",
     service: "MalachiteX API",
     mode: "live-ready",
+    timestamp: new Date().toISOString(),
+    port: env.port,
+    cors: {
+      exactOrigins: env.clientUrls,
+      wildcardPatterns: env.clientUrlPatterns,
+    },
+    modules: {
+      auth: true,
+      kyc: true,
+      wallet: true,
+      trading: true,
+      payments: true,
+      admin: true,
+      support: true,
+    },
     security: {
       auth: "jwt_with_refresh_rotation",
       twoFactor: "required_for_sensitive_actions",

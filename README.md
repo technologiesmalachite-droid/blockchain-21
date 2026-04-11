@@ -78,6 +78,7 @@ Optional:
 - API routes: `docs/api/routes.md`
 - Folder structure: `docs/architecture/folder-structure.md`
 - PostgreSQL schema: `docs/schema/postgresql.sql`
+- Railway + Vercel backend deploy: `docs/deploy/railway-vercel-backend.md`
 
 ## Production rollout notes
 
