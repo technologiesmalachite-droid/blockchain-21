@@ -1,9 +1,12 @@
 import { getMarketBySymbol, listMarkets } from "../services/marketService.js";
 
-export const getMarkets = (_req, res) => res.json({ items: listMarkets() });
+export const getMarkets = async (_req, res) => {
+  const items = await listMarkets();
+  return res.json({ items });
+};
 
-export const getMarketDetails = (req, res) => {
-  const market = getMarketBySymbol(req.params.symbol);
+export const getMarketDetails = async (req, res) => {
+  const market = await getMarketBySymbol(req.params.symbol);
 
   if (!market) {
     return res.status(404).json({ message: "Market symbol not found." });
@@ -11,4 +14,3 @@ export const getMarketDetails = (req, res) => {
 
   return res.json({ item: market });
 };
-

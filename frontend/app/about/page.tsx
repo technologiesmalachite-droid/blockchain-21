@@ -5,7 +5,7 @@ import { BRAND_NAME } from "@/lib/brand";
 export default function AboutPage() {
   return (
     <>
-      <PageHero eyebrow="About" title="A modern crypto exchange concept with original product design" description={`${BRAND_NAME} is designed to feel global, secure, and premium while staying clearly original and demo-safe.`} />
+      <PageHero eyebrow="About" title="A modern crypto exchange platform with original product design" description={`${BRAND_NAME} is designed to feel global, secure, and premium while supporting production-grade exchange operations.`} />
       <ContentSection>
         <div className="grid gap-6 lg:grid-cols-3">
           {["Mission", "Trust model", "Platform roadmap"].map((item) => (

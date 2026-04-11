@@ -5,6 +5,7 @@ import { Header } from "@/components/Header";
 import { MarketTicker } from "@/components/MarketTicker";
 import { ToastViewport } from "@/components/ui/ToastViewport";
 import { BRAND_DESCRIPTION, BRAND_LOGO_PATH, BRAND_NAME } from "@/lib/brand";
+import { AuthProvider } from "@/lib/auth-provider";
 import { DemoProvider } from "@/lib/demo-provider";
 import "./globals.css";
 
@@ -25,11 +26,13 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
     <html lang="en">
       <body>
         <DemoProvider>
-          <Header />
-          <MarketTicker />
-          <ToastViewport />
-          <main>{children}</main>
-          <Footer />
+          <AuthProvider>
+            <Header />
+            <MarketTicker />
+            <ToastViewport />
+            <main>{children}</main>
+            <Footer />
+          </AuthProvider>
         </DemoProvider>
       </body>
     </html>

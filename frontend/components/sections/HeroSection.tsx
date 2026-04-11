@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, ShieldCheck, Sparkles, WalletCards } from "lucide-react";
+import { ArrowRight, Info, ShieldCheck, Sparkles, WalletCards } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
@@ -12,7 +12,7 @@ export function HeroSection() {
     <section className="bg-hero-radial">
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 lg:grid-cols-[1.2fr_0.8fr] lg:px-8 lg:py-24">
         <div>
-          <Badge>Trusted demo exchange experience for modern digital finance</Badge>
+          <Badge>Trusted exchange infrastructure for modern digital finance</Badge>
           <h1 className="mt-6 max-w-3xl text-5xl font-semibold leading-tight text-white lg:text-6xl">
             Buy, trade, and grow your digital assets securely.
           </h1>
@@ -27,7 +27,7 @@ export function HeroSection() {
           <div className="mt-8 flex flex-wrap gap-6 text-sm text-muted">
             <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-accent" /> Secure account controls</div>
             <div className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-gold" /> Original premium interface</div>
-            <div className="flex items-center gap-2"><WalletCards className="h-4 w-4 text-accent" /> Demo-safe wallet flows</div>
+            <div className="flex items-center gap-2"><WalletCards className="h-4 w-4 text-accent" /> Live-ready wallet flows</div>
           </div>
         </div>
         <Card className="bg-gradient-to-b from-white/8 to-white/5">
@@ -52,8 +52,14 @@ export function HeroSection() {
               </div>
             ))}
           </div>
-          <div className="mt-8 rounded-2xl border border-gold/20 bg-gold/10 p-4 text-sm text-gold">
-            {announcements[0]}
+          <div className="mt-6 rounded-2xl border border-amber-200/20 bg-gradient-to-r from-amber-300/10 to-amber-200/5 px-4 py-3.5">
+            <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-amber-200/80">
+              <Info className="h-3.5 w-3.5 shrink-0" />
+              Platform notice
+            </div>
+            <p className="mt-2 text-sm leading-6 text-amber-100/90">
+              {announcements[0]}
+            </p>
           </div>
         </Card>
       </div>

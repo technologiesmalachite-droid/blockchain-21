@@ -5,7 +5,7 @@ import { feeRows } from "@/data/demo";
 export default function FeesPage() {
   return (
     <>
-      <PageHero eyebrow="Fees" title="Transparent spot fee tiers and demo calculator" description="Review maker and taker schedules, understand transaction costs, and preview fee-aware order economics." />
+      <PageHero eyebrow="Fees" title="Transparent spot fee tiers and fee calculator" description="Review maker and taker schedules, understand transaction costs, and preview fee-aware order economics." />
       <ContentSection>
         <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
           <Card>
@@ -29,4 +29,3 @@ export default function FeesPage() {
     </>
   );
 }
-

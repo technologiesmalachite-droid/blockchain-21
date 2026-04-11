@@ -1,53 +1,136 @@
 import bcrypt from "bcryptjs";
-import { v4 as uuid } from "uuid";
-import { db } from "./demoDb.js";
+import { withTransaction } from "../db/transaction.js";
+import { auditLogsRepository } from "../repositories/auditLogsRepository.js";
+import { usersRepository } from "../repositories/usersRepository.js";
+import { walletsRepository } from "../repositories/walletsRepository.js";
+
+const nowIso = () => new Date().toISOString();
 
 export const sanitizeUser = (user) => ({
   id: user.id,
   role: user.role,
+  status: user.status,
   email: user.email,
   phone: user.phone,
   fullName: user.fullName,
-  country: user.country,
+  countryCode: user.countryCode,
   antiPhishingCode: user.antiPhishingCode,
   twoFactorEnabled: user.twoFactorEnabled,
+  emailVerified: user.emailVerified,
+  phoneVerified: user.phoneVerified,
   kycStatus: user.kycStatus,
+  kycTier: user.kycTier,
+  sanctionsStatus: user.sanctionsStatus,
+  riskScore: user.riskScore,
+  accountRestrictions: user.accountRestrictions,
+  termsAcceptedAt: user.termsAcceptedAt,
+  privacyAcceptedAt: user.privacyAcceptedAt,
   createdAt: user.createdAt,
 });
 
-export const createUser = async ({ email, password, phone, fullName }) => {
-  const existing = db.users.find((user) => user.email === email);
+export const findUserByEmail = (email) => usersRepository.findByEmail(email);
+
+export const createUser = async ({
+  email,
+  password,
+  phone,
+  fullName,
+  countryCode,
+  termsAccepted,
+  privacyAccepted,
+}) => {
+  const existing = await usersRepository.findByEmail(email);
+
   if (existing) {
     throw new Error("An account with this email already exists.");
   }
 
-  const user = {
-    id: uuid(),
-    role: "user",
-    email,
-    phone: phone || "",
-    passwordHash: await bcrypt.hash(password, 10),
-    fullName,
-    country: "United States",
-    antiPhishingCode: "",
-    twoFactorEnabled: false,
-    kycStatus: "pending",
-    createdAt: new Date().toISOString(),
-  };
+  if (!termsAccepted || !privacyAccepted) {
+    throw new Error("Terms and privacy consent are required to create an account.");
+  }
 
-  db.users.push(user);
-  db.balances[user.id] = [{ asset: "USDT", balance: 10000, available: 10000, averageCost: 1 }];
-  db.orders[user.id] = [];
-  db.tradeHistory[user.id] = [];
-  db.transactions[user.id] = [];
-  return user;
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  return withTransaction(async (db) => {
+    const user = await usersRepository.create(
+      {
+        role: "user",
+        status: "active",
+        email,
+        phone: phone || "",
+        passwordHash,
+        fullName,
+        countryCode: countryCode || "US",
+        antiPhishingCode: "",
+        twoFactorEnabled: false,
+        twoFactorSecret: null,
+        twoFactorBackupCode: null,
+        emailVerified: false,
+        phoneVerified: false,
+        kycStatus: "pending",
+        kycTier: "none",
+        sanctionsStatus: "pending",
+        riskScore: 0,
+        termsAcceptedAt: nowIso(),
+        privacyAcceptedAt: nowIso(),
+        accountRestrictions: {
+          frozen: false,
+          withdrawalsLocked: false,
+          tradingLocked: false,
+          reason: null,
+          metadata: {},
+        },
+      },
+      db,
+    );
+
+    await walletsRepository.create(
+      {
+        userId: user.id,
+        walletType: "funding",
+        asset: "USDT",
+      },
+      db,
+    );
+
+    await walletsRepository.create(
+      {
+        userId: user.id,
+        walletType: "spot",
+        asset: "USDT",
+      },
+      db,
+    );
+
+    await auditLogsRepository.create(
+      {
+        action: "user_registered",
+        actorId: user.id,
+        actorRole: user.role,
+        resourceType: "user",
+        resourceId: user.id,
+        metadata: {
+          countryCode: user.countryCode,
+          emailVerified: false,
+          phoneVerified: false,
+        },
+      },
+      db,
+    );
+
+    return user;
+  });
 };
 
-export const authenticateUser = async ({ email, password }) => {
-  const user = db.users.find((entry) => entry.email === email);
+export const authenticateUser = async ({ email, password, twoFactorCode }) => {
+  const user = await usersRepository.findByEmail(email);
 
   if (!user) {
     throw new Error("Invalid credentials.");
+  }
+
+  if (user.status !== "active") {
+    throw new Error("Your account is restricted. Please contact support.");
   }
 
   const valid = await bcrypt.compare(password, user.passwordHash);
@@ -56,6 +139,17 @@ export const authenticateUser = async ({ email, password }) => {
     throw new Error("Invalid credentials.");
   }
 
+  if (user.accountRestrictions?.frozen) {
+    throw new Error("This account is frozen pending compliance review.");
+  }
+
+  if (user.twoFactorEnabled) {
+    if (!twoFactorCode || twoFactorCode !== user.twoFactorBackupCode) {
+      throw new Error("Two-factor verification is required.");
+    }
+  }
+
   return user;
 };
 
+export const verifyPassword = async (user, password) => bcrypt.compare(password, user.passwordHash);

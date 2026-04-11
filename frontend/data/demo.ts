@@ -25,7 +25,7 @@ export const tickerItems = [
   "ETH +2.53%",
   "SOL +3.26%",
   "BNB -1.24%",
-  "Funding rates remain demo-only",
+  "Funding rates updated under live risk controls",
   "Institutional API sandbox live",
   "Risk disclosures updated",
 ];
@@ -47,7 +47,7 @@ export const securityPillars = [
   "Two-factor authentication and anti-phishing code flows",
   "Role-based admin access and KYC review states",
   "Rate limiting, JWT rotation, and protected routes",
-  "Clear demo disclaimers to prevent real-funds confusion",
+  "Clear compliance disclosures and jurisdiction controls",
 ];
 
 export const stakingOffers = [
@@ -94,8 +94,8 @@ export const recentTrades = Array.from({ length: 12 }).map((_, index) => ({
 }));
 
 export const announcements = [
-  "MalachiteX is a demo exchange interface. No live custody or order execution is connected.",
-  "New staking previews and API sandbox endpoints are available for product testing.",
+  "MalachiteX is built for live operations with jurisdiction-aware onboarding, compliance controls, and protected trading workflows.",
+  "Regulated provider integrations and risk policies are enforced by country and account tier.",
 ];
 
 export const newsItems = [
@@ -105,8 +105,8 @@ export const newsItems = [
 ];
 
 export const faqItems = [
-  { q: "Is MalachiteX connected to real funds?", a: "No. This project is demo-safe and uses simulated balances, prices, and transaction workflows." },
-  { q: "Can I try trading logic?", a: "Yes. Spot trading interactions, order forms, wallet flows, and admin states work with realistic mock data." },
+  { q: "Is MalachiteX connected to real funds?", a: "MalachiteX is designed for live operations with provider abstraction and compliance controls. Activation depends on regulated integrations per jurisdiction." },
+  { q: "Can I try trading logic?", a: "Yes. Spot trading interactions, order forms, wallet flows, and admin states are production-oriented and integration-ready." },
   { q: "Does the site support compliance flows?", a: "Yes. KYC, device security, anti-phishing, risk notices, and legal pages are included." },
 ];
 

@@ -6,12 +6,6 @@
   color-scheme: dark;
 }
 
-html[data-theme="dim"] body {
-  background:
-    radial-gradient(circle at top right, rgba(240, 185, 11, 0.08), transparent 30%),
-    linear-gradient(180deg, #08101a 0%, #0b1320 100%);
-}
-
 body {
   background:
     radial-gradient(circle at top left, rgba(22, 196, 127, 0.12), transparent 28%),
@@ -31,4 +25,3 @@ body {
     transform: translateX(-50%);
   }
 }
-

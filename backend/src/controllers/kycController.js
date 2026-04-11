@@ -1,23 +1,32 @@
-import { v4 as uuid } from "uuid";
-import { db } from "../services/demoDb.js";
+import { getKycStatusForUser, listJurisdictionOptions, submitKycApplication } from "../services/kycService.js";
 
-export const submitKyc = (req, res) => {
-  const submission = {
-    id: uuid(),
-    userId: req.user.id,
-    ...req.validated.body,
-    status: "under_review",
-    createdAt: new Date().toISOString(),
-  };
-
-  db.kycSubmissions.push(submission);
-  req.user.kycStatus = "under_review";
-  return res.status(201).json({ submission, message: "KYC submitted for review." });
+export const getKycOptions = (req, res) => {
+  const { countryCode } = req.validated.params;
+  return res.json({ options: listJurisdictionOptions(countryCode) });
 };
 
-export const getKycStatus = (req, res) =>
-  res.json({
-    status: req.user.kycStatus,
-    latest: db.kycSubmissions.filter((item) => item.userId === req.user.id).at(-1) || null,
-  });
+export const submitKyc = async (req, res) => {
+  try {
+    if (!req.validated.body.consentAccepted) {
+      return res.status(400).json({ message: "Consent is required to submit identity verification." });
+    }
 
+    const result = await submitKycApplication({
+      user: req.user,
+      payload: req.validated.body,
+    });
+
+    return res.status(201).json({
+      submission: result.submission,
+      identityVerification: result.identityVerification,
+      sanctions: result.sanctions,
+      message: result.submission.status === "approved"
+        ? "KYC approved successfully."
+        : "KYC submitted and queued for compliance review.",
+    });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+export const getKycStatus = async (req, res) => res.json(await getKycStatusForUser(req.user));

@@ -12,8 +12,6 @@ type DemoContextType = {
   toggleFavorite: (symbol: string) => void;
   submitToast: (title: string, description: string) => void;
   toasts: Toast[];
-  theme: "dark" | "dim";
-  toggleTheme: () => void;
   balances: typeof balances;
   transactions: Transaction[];
   markets: typeof marketData;
@@ -28,7 +26,6 @@ const DemoContext = createContext<DemoContextType | null>(null);
 export function DemoProvider({ children }: { children: ReactNode }) {
   const [favorites, setFavorites] = useState<string[]>(["BTCUSDT", "ETHUSDT"]);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [theme, setTheme] = useState<"dark" | "dim">("dark");
   const [markets, setMarkets] = useState(marketData);
   const [transactionsState, setTransactionsState] = useState(transactions);
   const [orders, setOrders] = useState<Order[]>([
@@ -50,8 +47,6 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     }, 3200);
   };
 
-  const toggleTheme = () => setTheme((current) => (current === "dark" ? "dim" : "dark"));
-
   const addTransaction = (transaction: Omit<Transaction, "id" | "date">) => {
     setTransactionsState((current) => [
       {
@@ -72,10 +67,6 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     }
     setOrders((current) => [nextOrder, ...current]);
   };
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -101,8 +92,6 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       toggleFavorite,
       submitToast,
       toasts,
-      theme,
-      toggleTheme,
       balances,
       transactions: transactionsState,
       markets,
@@ -111,7 +100,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       addTransaction,
       placeOrder,
     }),
-    [favorites, toasts, theme, transactionsState, markets, orders, tradeHistory],
+    [favorites, toasts, transactionsState, markets, orders, tradeHistory],
   );
 
   return <DemoContext.Provider value={value}>{children}</DemoContext.Provider>;

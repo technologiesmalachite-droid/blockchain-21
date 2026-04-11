@@ -1,47 +1,68 @@
-import { v4 as uuid } from "uuid";
-import { db } from "../services/demoDb.js";
-import { getMarketBySymbol } from "../services/marketService.js";
+import {
+  cancelSpotOrder,
+  convertAsset,
+  createTradeQuote,
+  listOpenOrders,
+  listTradeHistory,
+  placeSpotOrder,
+} from "../services/tradingEngine.js";
 
-export const createOrder = (req, res) => {
-  const { symbol, side, orderType, price, quantity } = req.validated.body;
-  const market = getMarketBySymbol(symbol);
-
-  if (!market) {
-    return res.status(404).json({ message: "Trading pair is unavailable." });
+export const createQuote = async (req, res) => {
+  try {
+    const quote = await createTradeQuote(req.validated.body);
+    return res.json({ quote });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
   }
-
-  const order = {
-    id: uuid(),
-    symbol,
-    side,
-    orderType,
-    price: price || market.lastPrice,
-    quantity,
-    status: orderType === "market" ? "filled" : "open",
-    createdAt: new Date().toISOString(),
-  };
-
-  db.orders[req.user.id] ||= [];
-  db.tradeHistory[req.user.id] ||= [];
-  db.orders[req.user.id].unshift(order);
-
-  if (order.status === "filled") {
-    db.tradeHistory[req.user.id].unshift({
-      id: order.id,
-      symbol,
-      side,
-      price: order.price,
-      quantity,
-      fee: Number((order.price * quantity * 0.001).toFixed(2)),
-      time: order.createdAt,
-    });
-  }
-
-  return res.status(201).json({ order, message: "Demo order submitted successfully." });
 };
 
-export const getOpenOrders = (req, res) =>
-  res.json({ items: (db.orders[req.user.id] || []).filter((item) => item.status !== "filled") });
+export const createOrder = async (req, res) => {
+  try {
+    const result = await placeSpotOrder({
+      user: req.user,
+      symbol: req.validated.body.symbol,
+      side: req.validated.body.side,
+      orderType: req.validated.body.orderType,
+      quantity: req.validated.body.quantity,
+      price: req.validated.body.price,
+      walletType: req.validated.body.walletType || "spot",
+    });
 
-export const getTradeHistory = (req, res) => res.json({ items: db.tradeHistory[req.user.id] || [] });
+    return res.status(201).json({ order: result.order, quote: result.quote, message: "Order accepted." });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
 
+export const cancelOrder = async (req, res) => {
+  try {
+    const order = await cancelSpotOrder({
+      user: req.user,
+      orderId: req.params.orderId,
+    });
+
+    return res.json({ order, message: "Order cancelled." });
+  } catch (error) {
+    return res.status(404).json({ message: error.message });
+  }
+};
+
+export const createConversion = async (req, res) => {
+  try {
+    const trade = await convertAsset({
+      user: req.user,
+      fromAsset: req.validated.body.fromAsset,
+      toAsset: req.validated.body.toAsset,
+      amount: req.validated.body.amount,
+      walletType: req.validated.body.walletType || "spot",
+    });
+
+    return res.status(201).json({ trade, message: "Asset conversion completed." });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+export const getOpenOrders = async (req, res) => res.json({ items: await listOpenOrders(req.user.id) });
+
+export const getTradeHistory = async (req, res) => res.json({ items: await listTradeHistory(req.user.id) });
