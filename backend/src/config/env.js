@@ -25,6 +25,7 @@ const fallbackClientUrls = parseOrigins(process.env.CLIENT_URL);
 const configuredClientPatterns = parsePatterns(process.env.CLIENT_URL_PATTERNS);
 const nodeEnv = process.env.NODE_ENV || "development";
 const developmentClientUrls = ["http://localhost:3000", "http://localhost:3001"];
+const defaultProductionClientPatterns = ["https://*.vercel.app"];
 
 const dedupe = (values) => [...new Set(values)];
 
@@ -32,15 +33,22 @@ const baseClientUrls = configuredClientUrls.length
   ? configuredClientUrls
   : fallbackClientUrls.length
     ? fallbackClientUrls
-    : developmentClientUrls;
+    : nodeEnv === "development"
+      ? developmentClientUrls
+      : [];
 
 const resolvedClientUrls = nodeEnv === "development" ? dedupe([...baseClientUrls, ...developmentClientUrls]) : baseClientUrls;
+const resolvedClientPatterns = configuredClientPatterns.length
+  ? configuredClientPatterns
+  : nodeEnv === "production"
+    ? defaultProductionClientPatterns
+    : [];
 
 export const env = {
   port: Number(process.env.PORT || 5000),
   nodeEnv,
   clientUrls: resolvedClientUrls,
-  clientUrlPatterns: configuredClientPatterns,
+  clientUrlPatterns: resolvedClientPatterns,
   jwtSecret: process.env.JWT_SECRET || "replace_with_secure_jwt_secret",
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || "replace_with_secure_refresh_secret",
   encryptionKey: process.env.ENCRYPTION_KEY || "replace_with_32_byte_encryption_key",
