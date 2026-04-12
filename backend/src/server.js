@@ -92,7 +92,8 @@ app.get("/api/health", async (_req, res) => {
       database,
     },
     configuration: {
-      warnings: env.configurationWarnings,
+      ok: env.configurationWarnings.length === 0,
+      warningCount: env.configurationWarnings.length,
     },
     cors: {
       exactOrigins: env.clientUrls,
