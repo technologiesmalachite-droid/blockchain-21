@@ -18,17 +18,19 @@ import {
   twoFactorSetupSchema,
   verifyContactSchema,
 } from "../models/schemas.js";
+import { authAttemptLimiter } from "../middleware/rateLimits.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = Router();
 
-router.post("/register", validate(registerSchema), register);
-router.post("/login", validate(loginSchema), login);
-router.post("/logout", logout);
-router.post("/refresh", refresh);
+router.post("/register", authAttemptLimiter, validate(registerSchema), asyncHandler(register));
+router.post("/login", authAttemptLimiter, validate(loginSchema), asyncHandler(login));
+router.post("/logout", asyncHandler(logout));
+router.post("/refresh", authAttemptLimiter, asyncHandler(refresh));
 
-router.get("/sessions", requireAuth, getSessionHistory);
-router.post("/verification/send", requireAuth, validate(sendVerificationSchema), sendVerification);
-router.post("/verification/confirm", requireAuth, validate(verifyContactSchema), verifyContact);
-router.post("/2fa/setup", requireAuth, validate(twoFactorSetupSchema), setupTwoFactor);
+router.get("/sessions", requireAuth, asyncHandler(getSessionHistory));
+router.post("/verification/send", requireAuth, authAttemptLimiter, validate(sendVerificationSchema), asyncHandler(sendVerification));
+router.post("/verification/confirm", requireAuth, authAttemptLimiter, validate(verifyContactSchema), asyncHandler(verifyContact));
+router.post("/2fa/setup", requireAuth, validate(twoFactorSetupSchema), asyncHandler(setupTwoFactor));
 
 export default router;

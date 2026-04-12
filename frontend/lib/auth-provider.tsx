@@ -186,6 +186,14 @@ export const getFriendlyAuthError = (error: unknown) => {
     return "Your account is restricted for this action. Complete verification or contact support.";
   }
 
+  if (error.status === 429) {
+    return "Too many authentication attempts. Please wait a few minutes before trying again.";
+  }
+
+  if (error.status === 503) {
+    return "Authentication service is temporarily unavailable. Please try again shortly.";
+  }
+
   return "Authentication failed. Please try again.";
 };
 

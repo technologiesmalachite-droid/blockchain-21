@@ -22,9 +22,9 @@ function LoginPageContent() {
   const { signIn } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [email, setEmail] = useState("trader@malachitex.com");
-  const [password, setPassword] = useState("DemoTrader123!");
-  const [twoFactorCode, setTwoFactorCode] = useState("246810");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [twoFactorCode, setTwoFactorCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -63,6 +63,7 @@ function LoginPageContent() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 type="email"
+                placeholder="Email"
                 autoComplete="email"
                 required
                 className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
@@ -71,6 +72,7 @@ function LoginPageContent() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 type="password"
+                placeholder="Password"
                 autoComplete="current-password"
                 required
                 className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"

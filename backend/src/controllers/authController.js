@@ -9,6 +9,44 @@ import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/
 
 const refreshTokenExpiry = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 const generateVerificationCode = () => `${Math.floor(100000 + Math.random() * 900000)}`;
+const knownAuthMessages = new Set([
+  "An account with this email already exists.",
+  "Terms and privacy consent are required to create an account.",
+  "Invalid credentials.",
+  "Your account is restricted. Please contact support.",
+  "This account is frozen pending compliance review.",
+  "Two-factor verification is required.",
+]);
+
+const isDatabaseIssue = (error) => {
+  if (!error) {
+    return false;
+  }
+
+  const code = typeof error.code === "string" ? error.code : "";
+  const networkCodes = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE"]);
+  const dbCodes = /^(08|53|57|3D|XX)/;
+  const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
+
+  return (
+    networkCodes.has(code) ||
+    dbCodes.test(code) ||
+    message.includes("database") ||
+    message.includes("connection") ||
+    message.includes("connect") ||
+    message.includes("timeout")
+  );
+};
+
+const knownMessageOrFallback = (error, fallback) => {
+  const message = typeof error?.message === "string" ? error.message.trim() : "";
+
+  if (!message) {
+    return fallback;
+  }
+
+  return knownAuthMessages.has(message) ? message : fallback;
+};
 
 const respondWithSession = async (res, user, req) => {
   const accessToken = signAccessToken(user);
@@ -64,7 +102,18 @@ export const register = async (req, res) => {
 
     return respondWithSession(res.status(201), user, req);
   } catch (error) {
-    return res.status(400).json({ message: error.message });
+    if (error?.code === "23505") {
+      return res.status(409).json({ message: "An account with this email or phone already exists." });
+    }
+
+    if (isDatabaseIssue(error)) {
+      console.error("Register failed due to database/infrastructure issue", error);
+      return res.status(503).json({ message: "Registration is temporarily unavailable. Please try again shortly." });
+    }
+
+    return res.status(400).json({
+      message: knownMessageOrFallback(error, "Unable to create your account. Please review your details and try again."),
+    });
   }
 };
 
@@ -73,7 +122,14 @@ export const login = async (req, res) => {
     const user = await authenticateUser(req.validated.body);
     return respondWithSession(res, user, req);
   } catch (error) {
-    return res.status(401).json({ message: error.message });
+    if (isDatabaseIssue(error)) {
+      console.error("Login failed due to database/infrastructure issue", error);
+      return res.status(503).json({ message: "Authentication is temporarily unavailable. Please try again shortly." });
+    }
+
+    return res.status(401).json({
+      message: knownMessageOrFallback(error, "Invalid credentials or missing two-factor verification."),
+    });
   }
 };
 
@@ -111,7 +167,12 @@ export const refresh = async (req, res) => {
     return res.json({
       accessToken: signAccessToken(user),
     });
-  } catch {
+  } catch (error) {
+    if (isDatabaseIssue(error)) {
+      console.error("Refresh failed due to database/infrastructure issue", error);
+      return res.status(503).json({ message: "Session refresh is temporarily unavailable. Please try again shortly." });
+    }
+
     return res.status(401).json({ message: "Refresh token expired or invalid." });
   }
 };

@@ -4,10 +4,11 @@ import { requireAuth } from "../middleware/auth.js";
 import { requireActiveAccount, requireConsents, requireKycApproved, requireVerifiedContact } from "../middleware/security.js";
 import { validate } from "../middleware/validate.js";
 import { paymentIntentSchema, paymentWebhookSchema } from "../models/schemas.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = Router();
 
-router.get("/intents", requireAuth, requireActiveAccount, requireConsents, getPaymentIntents);
+router.get("/intents", requireAuth, requireActiveAccount, requireConsents, asyncHandler(getPaymentIntents));
 router.post(
   "/intents",
   requireAuth,
@@ -16,8 +17,8 @@ router.post(
   requireVerifiedContact,
   requireKycApproved,
   validate(paymentIntentSchema),
-  createPaymentIntent,
+  asyncHandler(createPaymentIntent),
 );
-router.post("/webhooks/provider", validate(paymentWebhookSchema), processPaymentWebhook);
+router.post("/webhooks/provider", validate(paymentWebhookSchema), asyncHandler(processPaymentWebhook));
 
 export default router;

@@ -21,11 +21,26 @@ export class ApiRequestError extends Error {
   }
 }
 
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000/api").replace(/\/$/, "");
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
 
 let refreshPromise: Promise<string | null> | null = null;
 
-const buildUrl = (path: string) => `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+const ensureApiBaseUrl = () => {
+  if (!API_BASE_URL) {
+    throw new ApiRequestError(
+      "Service configuration is incomplete. Please refresh the page or contact support.",
+      0,
+      "network_error",
+    );
+  }
+
+  return API_BASE_URL;
+};
+
+const buildUrl = (path: string) => {
+  const baseUrl = ensureApiBaseUrl();
+  return `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+};
 
 const toPublicErrorMessage = (status: number) => {
   if (status === 401 || status === 403) {
@@ -50,7 +65,11 @@ const parseJson = async <T>(response: Response): Promise<T> => {
     return null as T;
   }
 
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null as T;
+  }
 };
 
 const refreshAccessToken = async (): Promise<string | null> => {
@@ -132,7 +151,11 @@ export const apiRequest = async <T>(path: string, options: ApiRequestOptions = {
 
   try {
     response = await requestOnce<T>(path, options, accessToken);
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiRequestError) {
+      throw error;
+    }
+
     throw new ApiRequestError("Network request failed. Check your connection and retry.", 0, "network_error");
   }
 
@@ -143,7 +166,11 @@ export const apiRequest = async <T>(path: string, options: ApiRequestOptions = {
       accessToken = refreshedToken;
       try {
         response = await requestOnce<T>(path, options, accessToken);
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiRequestError) {
+          throw error;
+        }
+
         throw new ApiRequestError("Network request failed. Check your connection and retry.", 0, "network_error");
       }
     }

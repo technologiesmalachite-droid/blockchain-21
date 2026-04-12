@@ -74,13 +74,23 @@ export const requireTwoFactorForWithdrawal = async (req, res, next) => {
   return next();
 };
 
-export const secureErrorHandler = (error, _req, res, _next) => {
+export const secureErrorHandler = (error, req, res, _next) => {
   const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
-  const message = status >= 500 ? "Unexpected server error. Please try again." : error.message || "Request could not be completed.";
+  const candidateMessage = typeof error?.message === "string" ? error.message.trim() : "";
+  const message = status >= 500 ? "Unexpected server error. Please try again." : candidateMessage || "Request could not be completed.";
 
   if (status >= 500) {
-    console.error(error);
+    console.error("Unhandled request error", {
+      requestId: req.requestId,
+      method: req.method,
+      path: req.originalUrl,
+      status,
+      error,
+    });
   }
 
-  return res.status(status).json({ message });
+  return res.status(status).json({
+    message,
+    requestId: req.requestId,
+  });
 };
