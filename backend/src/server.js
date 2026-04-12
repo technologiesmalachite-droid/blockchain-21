@@ -79,7 +79,8 @@ app.get("/api/health", async (_req, res) => {
     database = "down";
   }
 
-  const status = database === "up" ? "ok" : "degraded";
+  const hasConfigurationWarnings = env.configurationWarnings.length > 0;
+  const status = database === "up" ? (hasConfigurationWarnings ? "warning" : "ok") : "degraded";
   const statusCode = database === "up" ? 200 : 503;
 
   res.status(statusCode).json({
@@ -89,6 +90,9 @@ app.get("/api/health", async (_req, res) => {
     timestamp: new Date().toISOString(),
     checks: {
       database,
+    },
+    configuration: {
+      warnings: env.configurationWarnings,
     },
     cors: {
       exactOrigins: env.clientUrls,

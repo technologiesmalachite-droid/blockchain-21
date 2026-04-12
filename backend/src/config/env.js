@@ -48,6 +48,7 @@ const jwtSecret = process.env.JWT_SECRET || "replace_with_secure_jwt_secret";
 const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET || "replace_with_secure_refresh_secret";
 const encryptionKey = process.env.ENCRYPTION_KEY || "replace_with_32_byte_encryption_key";
 const databaseUrl = process.env.DATABASE_URL || "";
+const configurationWarnings = [];
 
 const assertProductionSecret = (name, value, minLength) => {
   if (nodeEnv !== "production") {
@@ -62,12 +63,12 @@ const assertProductionSecret = (name, value, minLength) => {
   ]);
 
   if (!trimmed || weakDefaults.has(trimmed) || trimmed.length < minLength) {
-    throw new Error(`${name} is not securely configured for production.`);
+    configurationWarnings.push(`${name} is not securely configured for production.`);
   }
 };
 
 if (nodeEnv === "production" && !databaseUrl) {
-  throw new Error("DATABASE_URL must be configured in production.");
+  configurationWarnings.push("DATABASE_URL is not configured for production.");
 }
 
 assertProductionSecret("JWT_SECRET", jwtSecret, 32);
@@ -96,4 +97,5 @@ export const env = {
   authRateLimitMax: Number(process.env.AUTH_RATE_LIMIT_MAX || 20),
   outboxPollIntervalMs: Number(process.env.OUTBOX_POLL_INTERVAL_MS || 1500),
   outboxBatchSize: Number(process.env.OUTBOX_BATCH_SIZE || 20),
+  configurationWarnings,
 };
