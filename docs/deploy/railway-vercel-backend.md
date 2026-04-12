@@ -75,3 +75,64 @@ If CORS fails, update:
 
 - `CLIENT_URLS` with exact frontend URL
 - `CLIENT_URL_PATTERNS` with Vercel preview wildcard pattern
+
+## 7) Final production recovery (database + secrets)
+
+If `/api/health` returns `503` and `database: down`, complete this from Windows PowerShell:
+
+```powershell
+$ROOT = "C:\Users\admin\Desktop\block"
+$BACKEND = "$ROOT\backend"
+$VERCEL_DOMAIN = "https://frontend-phi-three-14.vercel.app"
+$DATABASE_URL = "<railway-postgres-url>"
+
+Set-Location $ROOT
+railway.cmd login
+railway.cmd whoami
+
+Set-Location $BACKEND
+railway.cmd link
+
+function New-RandomBase64([int]$bytes) {
+  $buffer = New-Object byte[] $bytes
+  [System.Security.Cryptography.RandomNumberGenerator]::Fill($buffer)
+  [Convert]::ToBase64String($buffer)
+}
+
+$JWT_SECRET = New-RandomBase64 64
+$JWT_REFRESH_SECRET = New-RandomBase64 64
+$ENCRYPTION_KEY = New-RandomBase64 32
+
+railway.cmd variables set NODE_ENV=production
+railway.cmd variables set DATABASE_URL="$DATABASE_URL"
+railway.cmd variables set JWT_SECRET="$JWT_SECRET"
+railway.cmd variables set JWT_REFRESH_SECRET="$JWT_REFRESH_SECRET"
+railway.cmd variables set ENCRYPTION_KEY="$ENCRYPTION_KEY"
+railway.cmd variables set CLIENT_URLS="$VERCEL_DOMAIN"
+railway.cmd variables set CLIENT_URL_PATTERNS="https://*.vercel.app"
+railway.cmd variables set AUTH_RATE_LIMIT_WINDOW_MS=900000
+railway.cmd variables set AUTH_RATE_LIMIT_MAX=20
+
+railway.cmd up
+railway.cmd domain
+```
+
+Expected after deploy:
+
+- `GET /api/health` -> `200`, `status: "ok"`, `checks.database: "up"`
+- `POST /api/auth/login` bad creds -> `401`
+- `GET /api/wallet/balances` without token -> `401`
+- `GET /api/trade/open-orders` without token -> `401`
+
+Automated helper script (same flow) is available at:
+
+- `backend/scripts/finalize-production.ps1`
+
+Usage:
+
+```powershell
+Set-Location C:\Users\admin\Desktop\block
+.\backend\scripts\finalize-production.ps1 `
+  -DatabaseUrl "<railway-postgres-url>" `
+  -VercelDomain "https://frontend-phi-three-14.vercel.app"
+```
