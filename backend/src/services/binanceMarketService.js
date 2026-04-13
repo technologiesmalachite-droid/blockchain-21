@@ -1,4 +1,7 @@
-const BINANCE_API_BASE = "https://api.binance.com/api/v3";
+const DEFAULT_BINANCE_BASES = [
+  "https://data-api.binance.vision/api/v3",
+  "https://api.binance.com/api/v3",
+];
 const ALLOWED_QUOTES = new Set(["USDT", "BTC", "ETH", "BNB", "FDUSD", "TRY", "EUR", "BRL"]);
 const ICON_CDN_BASE =
   process.env.BINANCE_MARKET_ICON_BASE_URL || "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color";
@@ -7,6 +10,19 @@ const STALE_TTL_MS = Number(process.env.BINANCE_MARKETS_STALE_TTL_MS || 5 * 60_0
 const REQUEST_TIMEOUT_MS = Number(process.env.BINANCE_MARKETS_TIMEOUT_MS || 8_000);
 const RETRY_COUNT = Number(process.env.BINANCE_MARKETS_RETRIES || 2);
 const RETRY_DELAY_MS = Number(process.env.BINANCE_MARKETS_RETRY_DELAY_MS || 350);
+const BINANCE_API_BASES = (() => {
+  const raw = process.env.BINANCE_MARKETS_BASE_URLS;
+  if (!raw || typeof raw !== "string") {
+    return DEFAULT_BINANCE_BASES;
+  }
+
+  const parsed = raw
+    .split(",")
+    .map((item) => item.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+
+  return parsed.length > 0 ? parsed : DEFAULT_BINANCE_BASES;
+})();
 
 const ICON_ALIASES = {
   BCHABC: "bch",
@@ -72,38 +88,41 @@ const parseFilters = (rawFilters) => {
 };
 
 const fetchWithTimeoutAndRetry = async (path) => {
-  const url = `${BINANCE_API_BASE}${path}`;
   let attempt = 0;
   let lastError = null;
 
   while (attempt <= RETRY_COUNT) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    for (const baseUrl of BINANCE_API_BASES) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: { accept: "application/json" },
-        cache: "no-store",
-        signal: controller.signal,
-      });
+      try {
+        const url = `${baseUrl}${path}`;
+        const response = await fetch(url, {
+          method: "GET",
+          headers: { accept: "application/json" },
+          cache: "no-store",
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(`Binance API responded with ${response.status} for ${path}`);
+        if (!response.ok) {
+          throw new Error(`Binance API responded with ${response.status} for ${url}`);
+        }
+
+        return await response.json();
+      } catch (error) {
+        lastError = error;
+      } finally {
+        clearTimeout(timeout);
       }
-
-      return await response.json();
-    } catch (error) {
-      lastError = error;
-      const isLastAttempt = attempt >= RETRY_COUNT;
-      if (isLastAttempt) {
-        throw lastError;
-      }
-      await sleep(RETRY_DELAY_MS * (attempt + 1));
-    } finally {
-      clearTimeout(timeout);
     }
 
+    const isLastAttempt = attempt >= RETRY_COUNT;
+    if (isLastAttempt) {
+      throw lastError;
+    }
+
+    await sleep(RETRY_DELAY_MS * (attempt + 1));
     attempt += 1;
   }
 
