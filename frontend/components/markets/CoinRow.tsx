@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { NormalizedCoinMarket, QuoteAsset } from "@/lib/markets/types";
 import {
+  formatCompactNumber,
   formatCompactUsd,
   formatPairPrice,
   formatSignedPercent,
-  formatSupply,
   percentTextColor,
 } from "@/lib/markets/format";
 import { CoinSparkline } from "@/components/markets/CoinSparkline";
@@ -17,16 +17,16 @@ import { WatchlistToggle } from "@/components/markets/WatchlistToggle";
 type CoinRowProps = {
   coin: NormalizedCoinMarket;
   quote: QuoteAsset;
-  quoteRate: number;
   favorite: boolean;
   onToggleFavorite: (symbol: string) => void;
 };
 
-export function CoinRow({ coin, quote, quoteRate, favorite, onToggleFavorite }: CoinRowProps) {
+export function CoinRow({ coin, quote, favorite, onToggleFavorite }: CoinRowProps) {
   const router = useRouter();
-  const quotePair = `${coin.symbol}/${quote}`;
+  const quotePair = `${coin.baseAsset}/${coin.quoteAsset}`;
   const [imageFailed, setImageFailed] = useState(false);
   const showLogo = Boolean(coin.image) && !imageFailed;
+  const quoteFilterHint = quote !== "ALL" && coin.quoteAsset !== quote ? ` (${quote} filter)` : "";
 
   return (
     <tr
@@ -59,20 +59,24 @@ export function CoinRow({ coin, quote, quoteRate, favorite, onToggleFavorite }: 
           )}
           <div>
             <p className="font-medium">{coin.name}</p>
-            <p className="text-xs text-muted">{quotePair}</p>
+            <p className="text-xs text-muted">{`${quotePair}${quoteFilterHint}`}</p>
           </div>
         </div>
       </td>
       <td className="px-4 py-3 text-muted">{coin.symbol}</td>
-      <td className="px-4 py-3 text-right font-medium">{formatPairPrice(coin.currentPriceUsd, quote, quoteRate)}</td>
-      <td className={`px-4 py-3 text-right ${percentTextColor(coin.change24h)}`}>{formatSignedPercent(coin.change24h)}</td>
-      <td className="px-4 py-3 text-right text-muted">{formatCompactUsd(coin.volume24hUsd)}</td>
-      <td className="px-4 py-3 text-right text-muted">{formatCompactUsd(coin.marketCapUsd)}</td>
-      <td className="px-4 py-3 text-right">{formatPairPrice(coin.high24hUsd, quote, quoteRate)}</td>
-      <td className="px-4 py-3 text-right">{formatPairPrice(coin.low24hUsd, quote, quoteRate)}</td>
-      <td className="px-4 py-3 text-right text-muted">{formatSupply(coin.circulatingSupply)}</td>
+      <td className="px-4 py-3 text-right font-medium">{formatPairPrice(coin.lastPrice, coin.quoteAsset, 1)}</td>
+      <td className={`px-4 py-3 text-right ${percentTextColor(coin.priceChangePercent)}`}>
+        {formatSignedPercent(coin.priceChangePercent)}
+      </td>
+      <td className="px-4 py-3 text-right text-muted">{formatCompactUsd(coin.volume)}</td>
+      <td className="px-4 py-3 text-right text-muted">{formatCompactNumber(coin.baseVolume)}</td>
+      <td className="px-4 py-3 text-right">{formatPairPrice(coin.highPrice, coin.quoteAsset, 1)}</td>
+      <td className="px-4 py-3 text-right">{formatPairPrice(coin.lowPrice, coin.quoteAsset, 1)}</td>
+      <td className="px-4 py-3 text-right text-muted">{coin.tickSize ?? "-"}</td>
+      <td className="px-4 py-3 text-right text-muted">{coin.stepSize ?? "-"}</td>
+      <td className="px-4 py-3 text-right text-muted">{coin.minNotional ?? "-"}</td>
       <td className="px-4 py-3">
-        <CoinSparkline points={coin.sparkline7d} positive={coin.change24h >= 0} />
+        <CoinSparkline points={coin.sparkline7d} positive={coin.priceChangePercent >= 0} />
       </td>
     </tr>
   );

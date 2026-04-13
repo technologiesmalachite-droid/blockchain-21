@@ -46,7 +46,7 @@ export function CoinSearchBar({
           <input
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Search by coin, symbol, or pair"
+            placeholder="Search by symbol, base asset, or pair"
             className="w-full rounded-2xl border border-white/10 bg-black/20 py-2.5 pl-9 pr-3 text-sm text-white outline-none placeholder:text-muted"
           />
         </label>
@@ -66,10 +66,15 @@ export function CoinSearchBar({
             onChange={(event) => onQuoteChange(event.target.value as QuoteAsset)}
             className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5 text-sm text-white"
           >
-            <option value="USD">USD</option>
+            <option value="ALL">All quotes</option>
             <option value="USDT">USDT</option>
             <option value="BTC">BTC</option>
             <option value="ETH">ETH</option>
+            <option value="BNB">BNB</option>
+            <option value="FDUSD">FDUSD</option>
+            <option value="TRY">TRY</option>
+            <option value="EUR">EUR</option>
+            <option value="BRL">BRL</option>
           </select>
 
           <select

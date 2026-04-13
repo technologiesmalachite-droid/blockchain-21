@@ -9,7 +9,6 @@ type CoinTableProps = {
   rows: NormalizedCoinMarket[];
   loading: boolean;
   quote: QuoteAsset;
-  quoteRate: number;
   sortField: SortField;
   sortDirection: SortDirection;
   onSortChange: (field: SortField) => void;
@@ -23,8 +22,8 @@ const sortableHeaders: Array<{ field: SortField; label: string; alignRight?: boo
   { field: "name", label: "Coin" },
   { field: "price", label: "Last price", alignRight: true },
   { field: "change24h", label: "24h %", alignRight: true },
-  { field: "volume", label: "24h volume", alignRight: true },
-  { field: "marketCap", label: "Market cap", alignRight: true },
+  { field: "volume", label: "24h quote volume", alignRight: true },
+  { field: "marketCap", label: "24h base volume", alignRight: true },
 ];
 
 function SortIcon({ active, direction }: { active: boolean; direction: SortDirection }) {
@@ -48,7 +47,6 @@ export function CoinTable({
   rows,
   loading,
   quote,
-  quoteRate,
   sortField,
   sortDirection,
   onSortChange,
@@ -92,7 +90,9 @@ export function CoinTable({
               ))}
               <th className="px-4 py-3 text-right">24h high</th>
               <th className="px-4 py-3 text-right">24h low</th>
-              <th className="px-4 py-3 text-right">Circulating supply</th>
+              <th className="px-4 py-3 text-right">Tick size</th>
+              <th className="px-4 py-3 text-right">Step size</th>
+              <th className="px-4 py-3 text-right">Min notional</th>
               <th className="px-4 py-3 text-left">7D</th>
             </tr>
           </thead>
@@ -104,7 +104,6 @@ export function CoinTable({
                     key={coin.id}
                     coin={coin}
                     quote={quote}
-                    quoteRate={quoteRate}
                     favorite={favorites.has(coin.symbol.toUpperCase())}
                     onToggleFavorite={onToggleFavorite}
                   />

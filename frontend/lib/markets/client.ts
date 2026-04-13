@@ -13,7 +13,7 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   return (await response.json()) as T;
 }
 
-export const fetchMarketsSnapshot = (signal?: AbortSignal) => fetchJson<MarketsSnapshot>("/api/markets", signal);
+export const fetchMarketsSnapshot = (signal?: AbortSignal) => fetchJson<MarketsSnapshot>("/api/markets/binance", signal);
 
 export const fetchMarketsOverview = (signal?: AbortSignal) =>
   fetchJson<MarketsOverview>("/api/markets/overview", signal);

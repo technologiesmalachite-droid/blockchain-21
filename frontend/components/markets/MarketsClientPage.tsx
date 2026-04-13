@@ -39,12 +39,12 @@ function sortRows(rows: NormalizedCoinMarket[], field: SortField, direction: Sor
         : field === "name"
           ? a.name.localeCompare(b.name)
           : field === "price"
-            ? a.currentPriceUsd - b.currentPriceUsd
+            ? a.lastPrice - b.lastPrice
             : field === "change24h"
-              ? a.change24h - b.change24h
+              ? a.priceChangePercent - b.priceChangePercent
               : field === "volume"
-                ? a.volume24hUsd - b.volume24hUsd
-                : a.marketCapUsd - b.marketCapUsd;
+                ? a.volume - b.volume
+                : a.baseVolume - b.baseVolume;
     return direction === "asc" ? base : -base;
   });
   return sorted;
@@ -59,7 +59,7 @@ export function MarketsClientPage({ initialSnapshot, initialOverview }: MarketsC
 
   const [activeTab, setActiveTab] = useState<MarketTab>("overview");
   const [marketType, setMarketType] = useState<MarketType>("spot");
-  const [quote, setQuote] = useState<QuoteAsset>("USDT");
+  const [quote, setQuote] = useState<QuoteAsset>("ALL");
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [moverFilter, setMoverFilter] = useState<MoverFilter>("all");
@@ -151,11 +151,15 @@ export function MarketsClientPage({ initialSnapshot, initialOverview }: MarketsC
   );
 
   const filteredRows = useMemo(() => {
-    let rows = snapshot.items;
+    let rows = snapshot.items.filter((row) => row.status === "TRADING");
 
     if (activeTab === "new" && overview.newListings.length > 0) {
       const listingIds = new Set(overview.newListings.map((item) => item.id));
       rows = rows.filter((row) => listingIds.has(row.id));
+    }
+
+    if (quote !== "ALL") {
+      rows = rows.filter((row) => row.quoteAsset === quote);
     }
 
     if (watchlistOnly) {
@@ -170,10 +174,12 @@ export function MarketsClientPage({ initialSnapshot, initialOverview }: MarketsC
 
     if (debouncedSearch) {
       rows = rows.filter((row) => {
-        const pair = `${row.symbol.toLowerCase()}/${quote.toLowerCase()}`;
+        const pair = `${row.baseAsset.toLowerCase()}/${row.quoteAsset.toLowerCase()}`;
         return (
           row.name.toLowerCase().includes(debouncedSearch) ||
           row.symbol.toLowerCase().includes(debouncedSearch) ||
+          row.baseAsset.toLowerCase().includes(debouncedSearch) ||
+          row.quoteAsset.toLowerCase().includes(debouncedSearch) ||
           pair.includes(debouncedSearch)
         );
       });
@@ -199,8 +205,6 @@ export function MarketsClientPage({ initialSnapshot, initialOverview }: MarketsC
     const from = (safePage - 1) * pageSize;
     return filteredRows.slice(from, from + pageSize);
   }, [filteredRows, pageSize, safePage]);
-
-  const quoteRate = snapshot.quotes[quote] || 1;
 
   const tableEmptyMessage =
     watchlistOnly && hydrated && symbols.length === 0
@@ -263,7 +267,10 @@ export function MarketsClientPage({ initialSnapshot, initialOverview }: MarketsC
           if (value === "futures") setActiveTab("futures");
         }}
         quote={quote}
-        onQuoteChange={(value) => setQuote(value)}
+        onQuoteChange={(value) => {
+          setQuote(value);
+          setPage(1);
+        }}
         moverFilter={moverFilter}
         onMoverFilterChange={(value) => {
           setMoverFilter(value);
@@ -299,11 +306,16 @@ export function MarketsClientPage({ initialSnapshot, initialOverview }: MarketsC
         </Card>
       ) : null}
 
+      {snapshot.stale && snapshot.staleReason ? (
+        <Card className="border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+          {snapshot.staleReason}
+        </Card>
+      ) : null}
+
       <CoinTable
         rows={pagedRows}
         loading={loading}
         quote={quote}
-        quoteRate={quoteRate}
         sortField={sortField}
         sortDirection={sortDirection}
         onSortChange={(field) => {

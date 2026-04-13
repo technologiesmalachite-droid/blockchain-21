@@ -1,4 +1,4 @@
-export type QuoteAsset = "USD" | "USDT" | "BTC" | "ETH";
+export type QuoteAsset = "ALL" | "USDT" | "BTC" | "ETH" | "BNB" | "FDUSD" | "TRY" | "EUR" | "BRL";
 
 export type MarketType = "spot" | "futures";
 
@@ -21,7 +21,22 @@ export interface NormalizedCoinMarket {
   rank: number;
   name: string;
   symbol: string;
+  baseAsset: string;
+  quoteAsset: string;
+  status: string;
+  pricePrecision: number;
+  quantityPrecision: number;
+  tickSize: string | null;
+  stepSize: string | null;
+  minNotional: string | null;
+  lastPrice: number;
+  priceChangePercent: number;
+  highPrice: number;
+  lowPrice: number;
+  volume: number;
+  baseVolume: number;
   image: string;
+  // Compatibility aliases used by existing UI components.
   currentPriceUsd: number;
   change24h: number;
   high24hUsd: number;
@@ -97,7 +112,9 @@ export interface CoinDetailResponse {
 
 export interface MarketsSnapshot {
   items: NormalizedCoinMarket[];
-  quotes: Record<QuoteAsset, number>;
+  quotes: Record<string, number>;
+  source?: string;
+  stale?: boolean;
+  staleReason?: string | null;
   updatedAt: string;
 }
-
