@@ -1,7 +1,7 @@
 import Link from "next/link";
-import Image from "next/image";
 import { Flame, LineChart, Sparkles, TrendingUp } from "lucide-react";
 import { Card } from "@/components/ui/Card";
+import { CryptoIcon } from "@/components/markets/CryptoIcon";
 import { MarketsOverview } from "@/lib/markets/types";
 import { formatCompactUsd, formatSignedPercent, percentTextColor } from "@/lib/markets/format";
 
@@ -64,13 +64,7 @@ export function MarketSummaryCards({ overview, loading }: MarketSummaryCardsProp
           {overview.hotCoins.slice(0, 3).map((coin) => (
             <Link key={coin.id} href={`/markets/${coin.symbol.toLowerCase()}`} className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2">
               <div className="flex items-center gap-2">
-                <Image
-                  src={coin.image || "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="}
-                  width={18}
-                  height={18}
-                  alt={`${coin.name} logo`}
-                  className="rounded-full"
-                />
+                <CryptoIcon symbol={coin.baseAsset || coin.symbol} src={coin.image} size={18} alt={`${coin.name} logo`} />
                 <span className="text-sm text-white">{coin.symbol}</span>
               </div>
               <span className={`text-xs ${percentTextColor(coin.change24h)}`}>{formatSignedPercent(coin.change24h)}</span>

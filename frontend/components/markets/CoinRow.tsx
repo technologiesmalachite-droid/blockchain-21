@@ -1,8 +1,6 @@
 "use client";
 
-import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 import { NormalizedCoinMarket, QuoteAsset } from "@/lib/markets/types";
 import {
   formatCompactNumber,
@@ -12,6 +10,7 @@ import {
   percentTextColor,
 } from "@/lib/markets/format";
 import { CoinSparkline } from "@/components/markets/CoinSparkline";
+import { CryptoIcon } from "@/components/markets/CryptoIcon";
 import { WatchlistToggle } from "@/components/markets/WatchlistToggle";
 
 type CoinRowProps = {
@@ -24,8 +23,6 @@ type CoinRowProps = {
 export function CoinRow({ coin, quote, favorite, onToggleFavorite }: CoinRowProps) {
   const router = useRouter();
   const quotePair = `${coin.baseAsset}/${coin.quoteAsset}`;
-  const [imageFailed, setImageFailed] = useState(false);
-  const showLogo = Boolean(coin.image) && !imageFailed;
   const quoteFilterHint = quote !== "ALL" && coin.quoteAsset !== quote ? ` (${quote} filter)` : "";
 
   return (
@@ -43,20 +40,7 @@ export function CoinRow({ coin, quote, favorite, onToggleFavorite }: CoinRowProp
       </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
-          {showLogo ? (
-            <Image
-              src={coin.image}
-              width={28}
-              height={28}
-              alt={`${coin.name} logo`}
-              className="rounded-full bg-white/5"
-              onError={() => setImageFailed(true)}
-            />
-          ) : (
-            <div className="flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-slate-800 text-[10px] font-semibold text-slate-300">
-              {coin.symbol.slice(0, 2)}
-            </div>
-          )}
+          <CryptoIcon symbol={coin.baseAsset} src={coin.image} size={28} alt={`${coin.name} logo`} />
           <div>
             <p className="font-medium">{coin.name}</p>
             <p className="text-xs text-muted">{`${quotePair}${quoteFilterHint}`}</p>

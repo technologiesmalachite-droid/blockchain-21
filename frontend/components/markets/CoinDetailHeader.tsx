@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import { CoinDetailResponse } from "@/lib/markets/types";
 import { formatCompactUsd, formatSignedPercent, formatUsd, percentTextColor } from "@/lib/markets/format";
+import { CryptoIcon } from "@/components/markets/CryptoIcon";
 import { WatchlistToggle } from "@/components/markets/WatchlistToggle";
 import { Card } from "@/components/ui/Card";
 
@@ -15,15 +15,11 @@ type CoinDetailHeaderProps = {
 };
 
 export function CoinDetailHeader({ detail, favorite, onToggleFavorite }: CoinDetailHeaderProps) {
-  const logoSrc =
-    detail.image ||
-    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
-
   return (
     <Card className="p-6">
       <div className="flex flex-wrap items-start justify-between gap-6">
         <div className="flex items-center gap-4">
-          <Image src={logoSrc} width={48} height={48} alt={`${detail.name} logo`} className="rounded-full" />
+          <CryptoIcon symbol={detail.symbol} src={detail.image} size={48} alt={`${detail.name} logo`} />
           <div>
             <p className="text-2xl font-semibold text-white">{detail.name}</p>
             <p className="text-sm text-muted">{detail.symbol.toUpperCase()} / USD</p>

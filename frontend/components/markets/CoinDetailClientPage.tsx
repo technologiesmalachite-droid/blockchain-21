@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { CoinDetailHeader } from "@/components/markets/CoinDetailHeader";
+import { CryptoIcon } from "@/components/markets/CryptoIcon";
 import { Card } from "@/components/ui/Card";
 import { fetchCoinDetail, useWatchlist } from "@/lib/markets/client";
 import { formatCompactUsd, formatSupply, formatUsd } from "@/lib/markets/format";
@@ -135,7 +135,7 @@ export function CoinDetailClientPage({ symbol, initialDetail }: CoinDetailClient
             {detail.related.slice(0, 6).map((coin) => (
               <Link key={coin.id} href={`/markets/${coin.symbol.toLowerCase()}`} className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm">
                 <div className="flex items-center gap-2">
-                  {coin.image ? <Image src={coin.image} width={18} height={18} alt={`${coin.name} logo`} className="rounded-full" /> : null}
+                  <CryptoIcon symbol={coin.symbol} src={coin.image} size={18} alt={`${coin.name} logo`} />
                   <span className="text-white">{coin.name}</span>
                 </div>
                 <span className="text-xs text-muted">{coin.symbol}</span>
