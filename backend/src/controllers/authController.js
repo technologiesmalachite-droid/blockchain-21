@@ -18,13 +18,13 @@ const knownAuthMessages = new Set([
   "Two-factor verification is required.",
 ]);
 
-const isDatabaseIssue = (error) => {
+const isInfrastructureIssue = (error) => {
   if (!error) {
     return false;
   }
 
   const code = typeof error.code === "string" ? error.code : "";
-  const networkCodes = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE"]);
+  const networkCodes = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "CONFIG_SECRET_INVALID"]);
   const dbCodes = /^(08|53|57|3D|XX)/;
   const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
 
@@ -34,7 +34,10 @@ const isDatabaseIssue = (error) => {
     message.includes("database") ||
     message.includes("connection") ||
     message.includes("connect") ||
-    message.includes("timeout")
+    message.includes("timeout") ||
+    message.includes("jwt_secret") ||
+    message.includes("jwt_refresh_secret") ||
+    message.includes("secret")
   );
 };
 
@@ -106,7 +109,7 @@ export const register = async (req, res) => {
       return res.status(409).json({ message: "An account with this email or phone already exists." });
     }
 
-    if (isDatabaseIssue(error)) {
+    if (isInfrastructureIssue(error)) {
       console.error("Register failed due to database/infrastructure issue", error);
       return res.status(503).json({ message: "Registration is temporarily unavailable. Please try again shortly." });
     }
@@ -122,7 +125,7 @@ export const login = async (req, res) => {
     const user = await authenticateUser(req.validated.body);
     return respondWithSession(res, user, req);
   } catch (error) {
-    if (isDatabaseIssue(error)) {
+    if (isInfrastructureIssue(error)) {
       console.error("Login failed due to database/infrastructure issue", error);
       return res.status(503).json({ message: "Authentication is temporarily unavailable. Please try again shortly." });
     }
@@ -168,7 +171,7 @@ export const refresh = async (req, res) => {
       accessToken: signAccessToken(user),
     });
   } catch (error) {
-    if (isDatabaseIssue(error)) {
+    if (isInfrastructureIssue(error)) {
       console.error("Refresh failed due to database/infrastructure issue", error);
       return res.status(503).json({ message: "Session refresh is temporarily unavailable. Please try again shortly." });
     }

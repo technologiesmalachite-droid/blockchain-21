@@ -118,6 +118,27 @@ app.use((req, res) => {
 
 app.use(secureErrorHandler);
 
+const logStartupDiagnostics = async () => {
+  if (env.configurationWarnings.length > 0) {
+    console.warn("Configuration warnings detected:", env.configurationWarnings);
+  }
+
+  try {
+    await query("SELECT 1");
+    console.info("Startup check: database connectivity confirmed.");
+  } catch (error) {
+    console.error("Startup check: database connectivity failed.", {
+      code: error?.code ?? null,
+      message: typeof error?.message === "string" ? error.message : "Unknown database error.",
+    });
+  }
+};
+
 app.listen(env.port, () => {
   console.log(`MalachiteX API running on http://localhost:${env.port}`);
+  logStartupDiagnostics().catch((error) => {
+    console.error("Startup diagnostics failed unexpectedly.", {
+      message: typeof error?.message === "string" ? error.message : String(error),
+    });
+  });
 });

@@ -22,6 +22,9 @@ export class ApiRequestError extends Error {
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+const DEFAULT_API_REQUEST_TIMEOUT_MS = 15000;
+const parsedTimeoutMs = Number(process.env.NEXT_PUBLIC_API_REQUEST_TIMEOUT_MS || DEFAULT_API_REQUEST_TIMEOUT_MS);
+const API_REQUEST_TIMEOUT_MS = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs >= 1000 ? parsedTimeoutMs : DEFAULT_API_REQUEST_TIMEOUT_MS;
 
 let refreshPromise: Promise<string | null> | null = null;
 
@@ -72,6 +75,51 @@ const parseJson = async <T>(response: Response): Promise<T> => {
   }
 };
 
+const isAbortError = (error: unknown) =>
+  error instanceof DOMException
+    ? error.name === "AbortError"
+    : typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name?: string }).name === "AbortError";
+
+const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit = {}) => {
+  const controller = new AbortController();
+  const externalSignal = init.signal;
+  const abortFromExternalSignal = () => controller.abort();
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", abortFromExternalSignal, { once: true });
+    }
+  }
+
+  const timeoutId = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      const message = externalSignal?.aborted
+        ? "Request was canceled."
+        : "Request timed out. Please try again.";
+      throw new ApiRequestError(message, 0, "network_error");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", abortFromExternalSignal);
+    }
+  }
+};
+
 const refreshAccessToken = async (): Promise<string | null> => {
   const refreshToken = getRefreshToken();
 
@@ -82,7 +130,7 @@ const refreshAccessToken = async (): Promise<string | null> => {
   if (!refreshPromise) {
     refreshPromise = (async () => {
       try {
-        const response = await fetch(buildUrl("/auth/refresh"), {
+        const response = await fetchWithTimeout(buildUrl("/auth/refresh"), {
           method: "POST",
           credentials: "include",
           headers: {
@@ -130,7 +178,7 @@ const requestOnce = async <T>(path: string, options: ApiRequestOptions, accessTo
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  return fetch(buildUrl(path), {
+  return fetchWithTimeout(buildUrl(path), {
     ...options,
     credentials: "include",
     headers,
