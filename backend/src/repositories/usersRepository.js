@@ -15,6 +15,7 @@ const baseUserSelect = `
     u.country_code,
     u.anti_phishing_code,
     u.two_factor_enabled,
+    u.two_factor_enabled_at,
     u.two_factor_secret,
     u.two_factor_backup_code,
     u.email_verified,
@@ -59,6 +60,7 @@ const mapUserRow = (row) => {
     countryCode: user.countryCode,
     antiPhishingCode: user.antiPhishingCode,
     twoFactorEnabled: user.twoFactorEnabled,
+    twoFactorEnabledAt: user.twoFactorEnabledAt,
     twoFactorSecret: user.twoFactorSecret,
     twoFactorBackupCode: user.twoFactorBackupCode,
     emailVerified: user.emailVerified,
@@ -114,14 +116,14 @@ export const usersRepository = {
     const { rows } = await db.query(
       `INSERT INTO users (
         role, status, email, phone, password_hash, firebase_uid, auth_provider, full_name, country_code,
-        anti_phishing_code, two_factor_enabled, two_factor_secret, two_factor_backup_code,
+        anti_phishing_code, two_factor_enabled, two_factor_enabled_at, two_factor_secret, two_factor_backup_code,
         email_verified, email_verified_at, phone_verified, phone_verified_at, kyc_status, kyc_tier, sanctions_status, risk_score,
         terms_accepted_at, privacy_accepted_at
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
-        $10, $11, $12, $13,
-        $14, $15, $16, $17, $18, $19, $20, $21,
-        $22, $23
+        $10, $11, $12, $13, $14,
+        $15, $16, $17, $18, $19, $20, $21, $22,
+        $23, $24
       ) RETURNING id`,
       [
         user.role,
@@ -135,6 +137,7 @@ export const usersRepository = {
         user.countryCode,
         user.antiPhishingCode,
         user.twoFactorEnabled,
+        user.twoFactorEnabledAt || null,
         user.twoFactorSecret,
         user.twoFactorBackupCode,
         user.emailVerified,
@@ -188,6 +191,7 @@ export const usersRepository = {
       countryCode: "country_code",
       antiPhishingCode: "anti_phishing_code",
       twoFactorEnabled: "two_factor_enabled",
+      twoFactorEnabledAt: "two_factor_enabled_at",
       twoFactorSecret: "two_factor_secret",
       twoFactorBackupCode: "two_factor_backup_code",
       emailVerified: "email_verified",

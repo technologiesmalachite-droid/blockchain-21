@@ -1,10 +1,24 @@
 import { supportTicketsRepository } from "../repositories/supportTicketsRepository.js";
+import { notifyUser } from "../services/notificationService.js";
 
 export const createTicket = async (req, res) => {
   const ticket = await supportTicketsRepository.create({
     userId: req.user.id,
     ...req.validated.body,
     status: "open",
+  });
+
+  await notifyUser({
+    userId: req.user.id,
+    category: "support",
+    severity: "info",
+    title: "Support ticket submitted",
+    message: "Your support ticket has been created and queued for review.",
+    actionUrl: "/support",
+    metadata: {
+      ticketId: ticket.id,
+      priority: ticket.priority,
+    },
   });
 
   return res.status(201).json({ ticket, message: "Support ticket created." });

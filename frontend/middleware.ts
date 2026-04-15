@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { sanitizePostAuthPath } from "./lib/auth/navigation";
 
 const AUTH_COOKIE_NAME = "mx_access_token";
+const AUTH_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password"];
 
 const PRIVATE_PREFIXES = [
   "/wallet",
@@ -14,18 +16,25 @@ const PRIVATE_PREFIXES = [
   "/futures/positions",
   "/settings",
   "/history",
+  "/notifications",
+  "/support",
 ];
 
 const isPrivatePath = (pathname: string) => PRIVATE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+const isAuthPath = (pathname: string) => AUTH_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
+  const accessToken = request.cookies.get(AUTH_COOKIE_NAME)?.value;
+
+  if (isAuthPath(pathname) && accessToken) {
+    const safeDestination = sanitizePostAuthPath(request.nextUrl.searchParams.get("next"), "/wallet");
+    return NextResponse.redirect(new URL(safeDestination, request.url));
+  }
 
   if (!isPrivatePath(pathname)) {
     return NextResponse.next();
   }
-
-  const accessToken = request.cookies.get(AUTH_COOKIE_NAME)?.value;
 
   if (accessToken) {
     return NextResponse.next();
@@ -41,6 +50,10 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/login",
+    "/signup",
+    "/forgot-password",
+    "/reset-password",
     "/wallet/:path*",
     "/orders/:path*",
     "/profile/:path*",
@@ -51,5 +64,7 @@ export const config = {
     "/futures/positions/:path*",
     "/settings/:path*",
     "/history/:path*",
+    "/notifications/:path*",
+    "/support/:path*",
   ],
 };

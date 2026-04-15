@@ -6,6 +6,8 @@ import { marketsRepository } from "../repositories/marketsRepository.js";
 import { orderBookRepository } from "../repositories/orderBookRepository.js";
 import { ordersRepository } from "../repositories/ordersRepository.js";
 import { tradesRepository } from "../repositories/tradesRepository.js";
+import { walletTransactionsRepository } from "../repositories/walletTransactionsRepository.js";
+import { walletsRepository } from "../repositories/walletsRepository.js";
 import { env } from "../config/env.js";
 import { consumeLockedBalance, creditWallet, debitWallet, releaseLockedBalance } from "./walletEngine.js";
 import { toDecimal, toNumber } from "../utils/decimal.js";
@@ -395,6 +397,97 @@ const persistMatchTrades = async ({ symbol, tradePrice, tradeQuantity, tradeNoti
   );
 };
 
+const persistMatchWalletTransactions = async ({
+  market,
+  tradePrice,
+  tradeQuantity,
+  settlement,
+  buyerOrder,
+  sellerOrder,
+  matchId,
+  takerOrderId,
+}, db) => {
+  const [buyerWallet, sellerWallet] = await Promise.all([
+    walletsRepository.findByUserTypeAsset(
+      {
+        userId: buyerOrder.userId,
+        walletType: buyerOrder.walletType,
+        asset: market.baseAsset,
+      },
+      db,
+    ),
+    walletsRepository.findByUserTypeAsset(
+      {
+        userId: sellerOrder.userId,
+        walletType: sellerOrder.walletType,
+        asset: market.quoteAsset,
+      },
+      db,
+    ),
+  ]);
+
+  await walletTransactionsRepository.create(
+    {
+      userId: buyerOrder.userId,
+      walletId: buyerWallet?.id || null,
+      transactionType: "trade_buy",
+      asset: market.baseAsset,
+      walletType: buyerOrder.walletType,
+      network: "internal",
+      amount: tradeQuantity,
+      fee: settlement.buyerFee,
+      destinationAddress: `${market.symbol} matched buy`,
+      status: "completed",
+      riskScore: 1,
+      idempotencyKey: `trade_wallet_buy_${matchId}_${buyerOrder.id}`,
+      txHash: `trade_${matchId}_buy`,
+      providerReference: matchId,
+      completedAt: new Date().toISOString(),
+      metadata: {
+        symbol: market.symbol,
+        matchId,
+        side: "buy",
+        price: tradePrice,
+        notional: settlement.tradeNotional,
+        feeAsset: market.quoteAsset,
+        liquidityRole: buyerOrder.id === takerOrderId ? "taker" : "maker",
+      },
+    },
+    db,
+  );
+
+  await walletTransactionsRepository.create(
+    {
+      userId: sellerOrder.userId,
+      walletId: sellerWallet?.id || null,
+      transactionType: "trade_sell",
+      asset: market.quoteAsset,
+      walletType: sellerOrder.walletType,
+      network: "internal",
+      amount: round(toDecimal(settlement.tradeNotional).minus(toDecimal(settlement.sellerFee))),
+      fee: settlement.sellerFee,
+      destinationAddress: `${market.symbol} matched sell`,
+      status: "completed",
+      riskScore: 1,
+      idempotencyKey: `trade_wallet_sell_${matchId}_${sellerOrder.id}`,
+      txHash: `trade_${matchId}_sell`,
+      providerReference: matchId,
+      completedAt: new Date().toISOString(),
+      metadata: {
+        symbol: market.symbol,
+        matchId,
+        side: "sell",
+        price: tradePrice,
+        quantity: tradeQuantity,
+        notional: settlement.tradeNotional,
+        feeAsset: market.quoteAsset,
+        liquidityRole: sellerOrder.id === takerOrderId ? "taker" : "maker",
+      },
+    },
+    db,
+  );
+};
+
 const applyFill = async ({ order, fillQuantity, lockedConsumed }, db) => {
   const nextFilled = round(toDecimal(order.filledQuantity || 0).plus(toDecimal(fillQuantity)));
   const quantity = toDecimal(order.quantity);
@@ -541,6 +634,20 @@ const runMatchingEngine = async ({ orderId, market }, db) => {
         buyerOrder,
         sellerOrder,
         feeAsset: settlement.feeAsset,
+        matchId,
+        takerOrderId: incoming.id,
+      },
+      db,
+    );
+
+    await persistMatchWalletTransactions(
+      {
+        market,
+        tradePrice,
+        tradeQuantity,
+        settlement,
+        buyerOrder,
+        sellerOrder,
         matchId,
         takerOrderId: incoming.id,
       },

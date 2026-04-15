@@ -7,7 +7,7 @@ export const tradesRepository = {
       `INSERT INTO trades (
         order_id, user_id, symbol, side, order_type, price,
         quantity, notional, fee, fee_asset, liquidity_role, settlement_wallet_type, idempotency_key, buy_order_id, sell_order_id, match_id, metadata
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)
       RETURNING *`,
       [
         trade.orderId || null,

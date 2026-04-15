@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { Menu } from "lucide-react";
-import { useState } from "react";
+import { Bell, Menu } from "lucide-react";
+import { useEffect, useState } from "react";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/lib/auth-provider";
 import { BRAND_TAGLINE } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 import { useDemo } from "@/lib/demo-provider";
+import { fetchNotifications } from "@/lib/api/private-data";
 
 const links = [
   { href: "/", label: "Dashboard" },
@@ -21,8 +22,43 @@ const links = [
 
 export function Header() {
   const [open, setOpen] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
   const { submitToast } = useDemo();
-  const { isAuthenticated, signOut, user } = useAuth();
+  const { isAuthenticated, signOut, user, status } = useAuth();
+
+  useEffect(() => {
+    let active = true;
+
+    if (status !== "authenticated") {
+      setUnreadNotifications(0);
+      return () => {
+        active = false;
+      };
+    }
+
+    const loadUnreadCount = async () => {
+      try {
+        const payload = await fetchNotifications({ page: 1, pageSize: 1, unreadOnly: true });
+        if (!active) {
+          return;
+        }
+        setUnreadNotifications(payload.unreadCount || 0);
+      } catch {
+        if (!active) {
+          return;
+        }
+        setUnreadNotifications(0);
+      }
+    };
+
+    loadUnreadCount();
+    const interval = window.setInterval(loadUnreadCount, 30000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [status]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -51,6 +87,14 @@ export function Header() {
             {isAuthenticated ? (
               <>
                 <div className="rounded-full border border-white/10 px-3 py-2 text-xs text-muted">{user?.fullName || "Account"}</div>
+                <Link href="/notifications" className="relative text-sm text-white" aria-label="Notifications">
+                  <Bell className="h-4 w-4" />
+                  {unreadNotifications > 0 ? (
+                    <span className="absolute -right-2 -top-2 rounded-full bg-accent px-1.5 py-0.5 text-[10px] text-black">
+                      {unreadNotifications > 99 ? "99+" : unreadNotifications}
+                    </span>
+                  ) : null}
+                </Link>
                 <Link href="/profile" className="text-sm text-white">
                   Profile
                 </Link>
@@ -86,6 +130,11 @@ export function Header() {
           <div className="flex gap-3">
             {isAuthenticated ? (
               <>
+                <Link href="/notifications" className="flex-1">
+                  <Button className="w-full" variant="secondary">
+                    Alerts {unreadNotifications > 0 ? `(${unreadNotifications > 99 ? "99+" : unreadNotifications})` : ""}
+                  </Button>
+                </Link>
                 <Link href="/profile" className="flex-1">
                   <Button className="w-full" variant="secondary">
                     Profile

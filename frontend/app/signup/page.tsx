@@ -3,12 +3,15 @@
 import Link from "next/link";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ContentSection, PageHero } from "@/components/PageShell";
+import { ContentSection } from "@/components/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { getFriendlyAuthError, useAuth } from "@/lib/auth-provider";
 import { BRAND_NAME } from "@/lib/brand";
 import { useDemo } from "@/lib/demo-provider";
+import { isFirebaseClientConfigured } from "@/lib/firebase";
+import { extractBackendErrorMessage } from "@/lib/auth/error-messages";
+import { sanitizePostAuthPath } from "@/lib/auth/navigation";
 
 const countries = [
   { code: "US", label: "United States" },
@@ -16,6 +19,23 @@ const countries = [
   { code: "AE", label: "United Arab Emirates" },
   { code: "SG", label: "Singapore" },
 ];
+
+const shouldRedirectToVerification = (
+  kycStatus: string | undefined,
+  emailVerified: boolean | undefined,
+  phoneVerified: boolean | undefined,
+) => {
+  const status = (kycStatus || "").toLowerCase();
+  if (status === "approved") {
+    return false;
+  }
+
+  if (!emailVerified || !phoneVerified) {
+    return true;
+  }
+
+  return status !== "approved";
+};
 
 export default function SignupPage() {
   return (
@@ -27,7 +47,7 @@ export default function SignupPage() {
 
 function SignupPageContent() {
   const { submitToast } = useDemo();
-  const { signUp, signUpWithGoogle, status } = useAuth();
+  const { signUp, signUpWithGoogle, status, user } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [fullName, setFullName] = useState("");
@@ -43,28 +63,42 @@ function SignupPageContent() {
   const [error, setError] = useState("");
 
   const rawNextPath = searchParams.get("next");
-  const nextPath = rawNextPath && rawNextPath.startsWith("/") ? rawNextPath : "/kyc";
+  const signupNextPath = useMemo(() => sanitizePostAuthPath(rawNextPath, "/kyc"), [rawNextPath]);
+  const signedInNextPath = useMemo(() => sanitizePostAuthPath(rawNextPath, "/wallet"), [rawNextPath]);
+
+  const authenticatedDestination = useMemo(() => {
+    const requiresVerification = shouldRedirectToVerification(user?.kycStatus, user?.emailVerified, user?.phoneVerified);
+    return requiresVerification ? "/kyc" : signedInNextPath;
+  }, [signedInNextPath, user?.emailVerified, user?.kycStatus, user?.phoneVerified]);
 
   useEffect(() => {
     if (status !== "authenticated") {
       return;
     }
 
-    router.replace(nextPath);
-  }, [nextPath, router, status]);
+    router.replace(authenticatedDestination);
+  }, [authenticatedDestination, router, status]);
 
   const canSubmit = useMemo(
-    () => Boolean(fullName && email && phone && password && confirmPassword && termsAccepted && privacyAccepted),
+    () => Boolean(fullName.trim() && email.trim() && phone.trim() && password && confirmPassword && termsAccepted && privacyAccepted),
     [confirmPassword, email, fullName, password, phone, privacyAccepted, termsAccepted],
   );
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (busy) {
+      return;
+    }
+
     setBusy(true);
     setError("");
 
     try {
+      if (!canSubmit) {
+        throw new Error("Please fill all required fields and accept Terms and Privacy Policy.");
+      }
+
       if (password.length < 10) {
         throw new Error("Password must be at least 10 characters.");
       }
@@ -74,18 +108,19 @@ function SignupPageContent() {
       }
 
       await signUp({
-        fullName,
-        email,
-        phone,
+        fullName: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
         countryCode,
         password,
         termsAccepted,
         privacyAccepted,
       });
       submitToast("Account created", "Check your email for a verification link, then complete KYC to unlock full trading and withdrawal access.");
-      router.replace(nextPath);
+      router.replace(signupNextPath);
     } catch (requestError) {
-      setError(getFriendlyAuthError(requestError));
+      const backendMessage = extractBackendErrorMessage(requestError);
+      setError(backendMessage || getFriendlyAuthError(requestError));
     } finally {
       setBusy(false);
     }
@@ -102,25 +137,56 @@ function SignupPageContent() {
         privacyAccepted,
       });
       submitToast("Google account connected", "Account authenticated successfully.");
-      router.replace(nextPath);
+      router.replace(signupNextPath);
     } catch (requestError) {
-      setError(getFriendlyAuthError(requestError));
+      const backendMessage = extractBackendErrorMessage(requestError);
+      setError(backendMessage || getFriendlyAuthError(requestError));
     } finally {
       setGoogleBusy(false);
     }
   };
 
-  return (
-    <>
-      <PageHero
-        eyebrow="Create account"
-        title={`Open your ${BRAND_NAME} account`}
-        description="Create a secure account with jurisdiction-based onboarding, contact verification, and compliance-ready controls."
-      />
+  if (status === "loading") {
+    return (
       <ContentSection>
-        <div className="mx-auto max-w-xl">
-          <Card>
-            <form className="space-y-4" onSubmit={onSubmit}>
+        <div className="mx-auto flex min-h-[calc(100vh-17rem)] w-full max-w-xl items-center justify-center py-4">
+          <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-5 text-center">
+            <p className="text-base font-semibold text-white">Checking your session...</p>
+            <p className="mt-2 text-sm text-muted">
+              Please wait while we restore your authentication state.
+            </p>
+          </div>
+        </div>
+      </ContentSection>
+    );
+  }
+
+  if (status === "authenticated") {
+    return (
+      <ContentSection>
+        <div className="mx-auto flex min-h-[calc(100vh-17rem)] w-full max-w-xl items-center justify-center py-4">
+          <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-5 text-center">
+            <p className="text-base font-semibold text-white">Redirecting to your account...</p>
+            <p className="mt-2 text-sm text-muted">You are already signed in.</p>
+          </div>
+        </div>
+      </ContentSection>
+    );
+  }
+
+  return (
+    <ContentSection>
+      <div className="mx-auto flex min-h-[calc(100vh-17rem)] w-full max-w-xl items-center justify-center py-4">
+        <Card className="w-full rounded-[2rem] border-white/15 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-black/95 p-8 shadow-[0_30px_80px_rgba(0,0,0,0.5)]">
+          <div className="space-y-2 text-center">
+            <p className="text-xs uppercase tracking-[0.24em] text-accent">Create account</p>
+            <h1 className="text-3xl font-semibold text-white">Open your {BRAND_NAME} account</h1>
+            <p className="text-sm leading-6 text-muted">
+              Create a secure account with compliance-ready onboarding and instant access to the MalachiteX ecosystem.
+            </p>
+          </div>
+
+          <form className="mt-6 space-y-4" onSubmit={onSubmit} noValidate>
               <input
                 placeholder="Full legal name"
                 value={fullName}
@@ -194,22 +260,23 @@ function SignupPageContent() {
                 I accept the Privacy Policy and data processing required for compliance screening.
               </label>
               {error ? <p className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p> : null}
-              <Button className="w-full" type="submit" disabled={busy || !canSubmit}>
+              <Button className="w-full" type="submit" disabled={busy}>
                 {busy ? "Creating account..." : "Create account"}
               </Button>
-              <Button className="w-full" type="button" variant="secondary" disabled={googleBusy || busy} onClick={onContinueWithGoogle}>
-                {googleBusy ? "Connecting..." : "Continue with Google"}
-              </Button>
+              {isFirebaseClientConfigured ? (
+                <Button className="w-full" type="button" variant="secondary" disabled={googleBusy || busy} onClick={onContinueWithGoogle}>
+                  {googleBusy ? "Connecting..." : "Continue with Google"}
+                </Button>
+              ) : null}
               <p className="text-sm text-muted">
                 Already registered?{" "}
-                <Link href={`/login${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ""}`} className="text-accent">
+                <Link href={`/login${signupNextPath ? `?next=${encodeURIComponent(signupNextPath)}` : ""}`} className="text-accent">
                   Sign in
                 </Link>
               </p>
             </form>
-          </Card>
-        </div>
-      </ContentSection>
-    </>
+        </Card>
+      </div>
+    </ContentSection>
   );
 }

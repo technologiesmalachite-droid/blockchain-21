@@ -6,7 +6,6 @@ import { apiRequest } from "@/lib/api/client";
 export type LoginPayload = {
   email: string;
   password: string;
-  twoFactorCode?: string;
 };
 
 export type RegisterPayload = {
@@ -26,22 +25,51 @@ export type FirebaseSessionPayload = {
   privacyAccepted?: boolean;
 };
 
-type AuthResponse = AuthSession;
+export type TwoFactorLoginChallenge = {
+  requiresTwoFactor: true;
+  loginToken: string;
+  message: string;
+};
+
+export type AuthStepResult = AuthSession | TwoFactorLoginChallenge;
+
+export type TwoFactorSetupResponse = {
+  message: string;
+  challengeId: string;
+  expiresAt: string;
+  otpauthUrl: string;
+  qrCodeDataUrl: string;
+  manualEntryKey: string;
+};
+
+export type SessionHistoryItem = {
+  id: string;
+  createdAt: string;
+  expiresAt: string;
+  userAgent: string;
+  ipAddress: string;
+};
 
 export const loginRequest = (payload: LoginPayload) =>
-  apiRequest<AuthResponse>("/auth/login", {
+  apiRequest<AuthStepResult>("/auth/login", {
+    method: "POST",
+    body: payload,
+  });
+
+export const verifyTwoFactorLoginRequest = (payload: { loginToken: string; code: string }) =>
+  apiRequest<AuthSession>("/auth/2fa/login-verify", {
     method: "POST",
     body: payload,
   });
 
 export const registerRequest = (payload: RegisterPayload) =>
-  apiRequest<AuthResponse>("/auth/register", {
+  apiRequest<AuthSession>("/auth/register", {
     method: "POST",
     body: payload,
   });
 
 export const firebaseSessionRequest = (payload: FirebaseSessionPayload) =>
-  apiRequest<AuthResponse>("/auth/firebase/session", {
+  apiRequest<AuthStepResult>("/auth/firebase/session", {
     method: "POST",
     body: payload,
   });
@@ -71,17 +99,72 @@ export const confirmVerificationCodeRequest = (payload: { channel: "email" | "ph
     body: payload,
   });
 
-export const setupTwoFactorRequest = (payload: { enable: boolean; backupCode?: string }) =>
-  apiRequest<{ message: string; user: AuthUser; secret?: string }>("/auth/2fa/setup", {
+export const setupTwoFactorRequest = () =>
+  apiRequest<TwoFactorSetupResponse>("/auth/2fa/setup", {
+    auth: "required",
+    method: "POST",
+    body: {},
+  });
+
+export const verifyEnableTwoFactorRequest = (payload: { challengeId: string; code: string }) =>
+  apiRequest<{ message: string; user: AuthUser; recoveryCodes?: string[] }>("/auth/2fa/verify-enable", {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });
+
+export const disableTwoFactorRequest = (payload: { password?: string; code?: string }) =>
+  apiRequest<{ message: string; user: AuthUser }>("/auth/2fa/disable", {
     auth: "required",
     method: "POST",
     body: payload,
   });
 
 export const fetchSessionHistoryRequest = () =>
-  apiRequest<{ items: Array<{ id: string; createdAt: string; expiresAt: string; userAgent: string; ipAddress: string }> }>(
-    "/auth/sessions",
-    {
-      auth: "required",
-    },
-  );
+  apiRequest<{ items: SessionHistoryItem[] }>("/auth/sessions", {
+    auth: "required",
+  });
+
+export const forgotPasswordRequest = (payload: { email: string }) =>
+  apiRequest<{ message: string; resetToken?: string }>("/auth/forgot-password", {
+    method: "POST",
+    body: payload,
+  });
+
+export const resetPasswordRequest = (payload: { token: string; password: string }) =>
+  apiRequest<{ message: string }>("/auth/reset-password", {
+    method: "POST",
+    body: payload,
+  });
+
+export const changePasswordRequest = (payload: {
+  currentPassword: string;
+  newPassword: string;
+  currentRefreshToken?: string;
+}) =>
+  apiRequest<{ message: string }>("/auth/change-password", {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });
+
+export const revokeSessionRequest = (payload: { sessionId: string }) =>
+  apiRequest<{ message: string }>("/auth/sessions/revoke", {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });
+
+export const revokeOtherSessionsRequest = (payload?: { currentRefreshToken?: string }) =>
+  apiRequest<{ message: string }>("/auth/sessions/revoke-others", {
+    auth: "required",
+    method: "POST",
+    body: payload || {},
+  });
+
+export const regenerateTwoFactorBackupCodesRequest = (payload: { password?: string; code?: string }) =>
+  apiRequest<{ message: string; recoveryCodes: string[]; user: AuthUser }>("/auth/2fa/backup-codes/regenerate", {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });

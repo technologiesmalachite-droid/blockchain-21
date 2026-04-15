@@ -17,6 +17,8 @@ export type AuthUser = {
   countryCode?: string;
   antiPhishingCode?: string;
   twoFactorEnabled?: boolean;
+  twoFactorEnabledAt?: string;
+  twoFactorRecoveryCodesRemaining?: number;
   emailVerified?: boolean;
   emailVerifiedAt?: string;
   phoneVerified?: boolean;

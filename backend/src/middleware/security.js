@@ -1,4 +1,5 @@
 import { auditLogsRepository } from "../repositories/auditLogsRepository.js";
+import { decryptTotpSecret, verifyTotpCode } from "../services/twoFactorService.js";
 
 const unauthorized = (res, message = "Authentication required.") => res.status(401).json({ message });
 const forbidden = (res, message = "You do not have permission to perform this action.") => res.status(403).json({ message });
@@ -56,7 +57,20 @@ export const requireTwoFactorForWithdrawal = async (req, res, next) => {
     return forbidden(res, "Two-factor verification is required for withdrawals.");
   }
 
-  if (code !== req.user.twoFactorBackupCode) {
+  const secretEncrypted = req.user.twoFactorSecret;
+  if (!secretEncrypted) {
+    return forbidden(res, "Two-factor authentication is unavailable for this account. Please contact support.");
+  }
+
+  let valid = false;
+  try {
+    const secret = decryptTotpSecret(secretEncrypted);
+    valid = verifyTotpCode({ secret, code: String(code || "") });
+  } catch {
+    valid = false;
+  }
+
+  if (!valid) {
     await auditLogsRepository.create({
       action: "withdrawal_2fa_failed",
       actorId: req.user.id,

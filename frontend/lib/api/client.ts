@@ -21,7 +21,9 @@ export class ApiRequestError extends Error {
   }
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+const PRODUCTION_API_BASE_URL_FALLBACK = "https://malachitex-backend-production.up.railway.app/api";
+const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
+const API_BASE_URL = configuredApiBaseUrl || (process.env.NODE_ENV === "production" ? PRODUCTION_API_BASE_URL_FALLBACK : "");
 const DEFAULT_API_REQUEST_TIMEOUT_MS = 15000;
 const parsedTimeoutMs = Number(process.env.NEXT_PUBLIC_API_REQUEST_TIMEOUT_MS || DEFAULT_API_REQUEST_TIMEOUT_MS);
 const API_REQUEST_TIMEOUT_MS = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs >= 1000 ? parsedTimeoutMs : DEFAULT_API_REQUEST_TIMEOUT_MS;

@@ -44,6 +44,26 @@ export const otpVerifyLimiter = rateLimit({
   handler: jsonRateLimitHandler("Too many OTP verification attempts. Please try again later."),
 });
 
+export const twoFactorActionLimiter = rateLimit({
+  windowMs: env.authRateLimitWindowMs,
+  limit: Math.max(10, env.authRateLimitMax),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: userAwareKeyGenerator,
+  handler: jsonRateLimitHandler("Too many two-factor setup requests. Please try again later."),
+});
+
+export const twoFactorVerifyLimiter = rateLimit({
+  windowMs: env.authRateLimitWindowMs,
+  limit: Math.max(10, env.authRateLimitMax),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: userAwareKeyGenerator,
+  handler: jsonRateLimitHandler("Too many two-factor verification attempts. Please wait and try again."),
+});
+
 export const tradeOrderLimiter = rateLimit({
   windowMs: env.tradeOrderRateLimitWindowMs,
   limit: env.tradeOrderRateLimitMax,
@@ -62,4 +82,34 @@ export const tradeCancelLimiter = rateLimit({
   skipSuccessfulRequests: false,
   keyGenerator: userAwareKeyGenerator,
   handler: jsonRateLimitHandler("Too many cancel requests. Please wait before trying again."),
+});
+
+export const walletActionLimiter = rateLimit({
+  windowMs: env.walletActionRateLimitWindowMs,
+  limit: env.walletActionRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: userAwareKeyGenerator,
+  handler: jsonRateLimitHandler("Too many wallet requests. Please wait and try again."),
+});
+
+export const walletWithdrawalLimiter = rateLimit({
+  windowMs: env.walletWithdrawRateLimitWindowMs,
+  limit: env.walletWithdrawRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: userAwareKeyGenerator,
+  handler: jsonRateLimitHandler("Too many withdrawal requests. Please wait before retrying."),
+});
+
+export const walletSwapLimiter = rateLimit({
+  windowMs: env.walletSwapRateLimitWindowMs,
+  limit: env.walletSwapRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: userAwareKeyGenerator,
+  handler: jsonRateLimitHandler("Too many swap requests. Please slow down and retry."),
 });

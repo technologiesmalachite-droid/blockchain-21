@@ -11,6 +11,35 @@ const normalizedOrderTypeSchema = z.preprocess(
   (value) => (typeof value === "string" ? value.toLowerCase() : value),
   z.enum(["market", "limit"]),
 );
+const toNumberInput = (value) => {
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : value;
+  }
+  return value;
+};
+
+const toBooleanInput = (value) => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") {
+      return true;
+    }
+    if (normalized === "false") {
+      return false;
+    }
+  }
+  return value;
+};
+const queryOptionalPositiveIntSchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  return toNumberInput(value);
+}, z.number().int().positive().optional());
 
 export const registerSchema = z.object({
   body: z.object({
@@ -30,8 +59,50 @@ export const loginSchema = z.object({
   body: z.object({
     email: z.string().email(),
     password: z.string().min(8),
-    twoFactorCode: z.string().min(6).max(8).optional(),
   }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const forgotPasswordSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const resetPasswordSchema = z.object({
+  body: z.object({
+    token: z.string().min(24),
+    password: z.string().min(10),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const changePasswordSchema = z.object({
+  body: z.object({
+    currentPassword: z.string().min(8),
+    newPassword: z.string().min(10),
+    currentRefreshToken: z.string().min(24).optional(),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const revokeSessionSchema = z.object({
+  body: z.object({
+    sessionId: z.string().uuid(),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const revokeOtherSessionsSchema = z.object({
+  body: z.object({
+    currentRefreshToken: z.string().min(24).optional(),
+  }).optional(),
   query: z.object({}).optional(),
   params: z.object({}).optional(),
 });
@@ -54,9 +125,52 @@ export const sendVerificationSchema = z.object({
 });
 
 export const twoFactorSetupSchema = z.object({
+  body: z.object({}).optional(),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const twoFactorVerifyEnableSchema = z.object({
   body: z.object({
-    enable: z.boolean(),
-    backupCode: z.string().length(6).optional(),
+    challengeId: z.string().uuid(),
+    code: z.string().trim().min(6).max(8),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const twoFactorDisableSchema = z.object({
+  body: z
+    .object({
+      password: z.string().min(8).optional(),
+      code: z.string().trim().min(6).max(8).optional(),
+    })
+    .refine((value) => Boolean(value.password || value.code), {
+      message: "Password or two-factor code is required.",
+      path: ["password"],
+    }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const twoFactorBackupCodesRegenerateSchema = z.object({
+  body: z
+    .object({
+      password: z.string().min(8).optional(),
+      code: z.string().trim().min(6).max(8).optional(),
+    })
+    .refine((value) => Boolean(value.password || value.code), {
+      message: "Password or two-factor code is required.",
+      path: ["password"],
+    }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const twoFactorLoginVerifySchema = z.object({
+  body: z.object({
+    loginToken: z.string().min(24),
+    code: z.string().trim().min(6).max(20),
   }),
   query: z.object({}).optional(),
   params: z.object({}).optional(),
@@ -149,6 +263,122 @@ export const depositAddressSchema = z.object({
   }),
   query: z.object({}).optional(),
   params: z.object({}).optional(),
+});
+
+export const walletAddressBookQuerySchema = z.object({
+  query: z.object({
+    asset: z.string().min(2),
+    walletType: z.enum(["spot", "funding"]).optional(),
+  }),
+  params: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const walletAssetDetailSchema = z.object({
+  params: z.object({
+    asset: z.string().min(2),
+  }),
+  query: z.object({
+    walletType: z.enum(["spot", "funding"]).optional(),
+  }).optional(),
+  body: z.object({}).optional(),
+});
+
+export const walletHistoryQuerySchema = z.object({
+  query: z.object({
+    page: queryOptionalPositiveIntSchema,
+    pageSize: queryOptionalPositiveIntSchema,
+    asset: z.string().min(2).optional(),
+    walletType: z.enum(["spot", "funding"]).optional(),
+    type: z.string().min(2).optional(),
+    status: z.string().min(2).optional(),
+    network: z.string().min(2).optional(),
+    search: z.string().trim().min(1).max(120).optional(),
+  }).optional(),
+  params: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const walletTransactionIdSchema = z.object({
+  params: z.object({
+    id: z.string().min(8),
+  }),
+  query: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const walletTransactionHashSchema = z.object({
+  params: z.object({
+    hash: z.string().min(6),
+  }),
+  query: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const walletWithdrawEstimateSchema = z.object({
+  body: z.object({
+    asset: z.string().min(2),
+    network: z.string().min(2),
+    amount: z.preprocess(toNumberInput, z.number().positive()),
+    walletType: z.enum(["spot", "funding"]).default("funding"),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const walletSwapQuoteSchema = z.object({
+  body: z.object({
+    fromAsset: z.string().min(2),
+    toAsset: z.string().min(2),
+    amount: z.preprocess(toNumberInput, z.number().positive()),
+    walletType: z.enum(["spot", "funding"]).default("funding"),
+    slippageBps: z.preprocess(
+      (value) => (value === undefined || value === null || value === "" ? 50 : toNumberInput(value)),
+      z.number().int().min(0).max(5000),
+    ),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const walletSwapConfirmSchema = z.object({
+  body: z.object({
+    quoteId: z.string().uuid(),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const walletBuySellIntentSchema = z.object({
+  body: z.object({
+    asset: z.string().min(2).optional(),
+    amount: z.preprocess((value) => (value === undefined || value === null || value === "" ? undefined : toNumberInput(value)), z.number().positive().optional()),
+    fiatCurrency: z.string().trim().length(3).optional(),
+    paymentMethod: z.string().trim().min(2).optional(),
+  }).optional(),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const notificationsQuerySchema = z.object({
+  query: z.object({
+    page: queryOptionalPositiveIntSchema,
+    pageSize: queryOptionalPositiveIntSchema,
+    unreadOnly: z.preprocess(
+      (value) => (value === undefined || value === null || value === "" ? undefined : toBooleanInput(value)),
+      z.boolean().optional(),
+    ),
+  }).optional(),
+  params: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const markNotificationSchema = z.object({
+  params: z.object({
+    id: z.string().uuid(),
+  }),
+  query: z.object({}).optional(),
+  body: z.object({}).optional(),
 });
 
 export const kycOptionsSchema = z.object({

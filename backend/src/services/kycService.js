@@ -9,6 +9,7 @@ import { kycReviewsRepository } from "../repositories/kycReviewsRepository.js";
 import { usersRepository } from "../repositories/usersRepository.js";
 import { providers } from "./providerRegistry.js";
 import { deleteEncryptedKycFile, readEncryptedKycFile, storeEncryptedKycFile } from "./kycStorageService.js";
+import { notifyUser } from "./notificationService.js";
 
 const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 const KYC_STATUS_ORDER = [
@@ -900,6 +901,34 @@ export const reviewKycSubmission = async ({ actor, submissionId, decision, note,
     );
 
     return updated;
+  });
+
+  await notifyUser({
+    userId: submission.userId,
+    category: "kyc",
+    severity: normalizedDecision === "approved" ? "success" : normalizedDecision === "rejected" ? "warning" : "info",
+    title:
+      normalizedDecision === "approved"
+        ? "KYC approved"
+        : normalizedDecision === "rejected"
+          ? "KYC rejected"
+          : normalizedDecision === "needs_resubmission"
+            ? "KYC resubmission requested"
+            : "KYC status updated",
+    message:
+      normalizedDecision === "approved"
+        ? "Your verification has been approved. Trading and withdrawals remain enabled under your limits."
+        : normalizedDecision === "rejected"
+          ? rejectionReason || "Your KYC submission was rejected. Review details and resubmit."
+          : normalizedDecision === "needs_resubmission"
+            ? rejectionReason || "Additional documentation is required. Please resubmit your KYC documents."
+            : "Your KYC submission is being reviewed.",
+    actionUrl: "/kyc",
+    metadata: {
+      submissionId: submission.id,
+      decision: normalizedDecision,
+      rejectionReason: rejectionReason || null,
+    },
   });
 
   return updatedSubmission;

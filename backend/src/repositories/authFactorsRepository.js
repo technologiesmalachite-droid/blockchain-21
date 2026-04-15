@@ -55,6 +55,59 @@ export const authFactorsRepository = {
     );
   },
 
+  async markActiveTotpSetupChallengesConsumed({ userId }, db = { query }) {
+    await db.query(
+      `UPDATE auth_factors
+       SET consumed_at = NOW(),
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND factor_type = 'totp_setup'
+         AND consumed_at IS NULL`,
+      [userId],
+    );
+  },
+
+  async createTotpSetupChallenge({ userId, secretEncrypted, ttlMinutes = 10, maxAttempts = 5 }, db = { query }) {
+    await this.markActiveTotpSetupChallengesConsumed({ userId }, db);
+
+    const { rows } = await db.query(
+      `INSERT INTO auth_factors (
+        user_id, factor_type, secret_encrypted, max_attempts, expires_at, metadata
+      ) VALUES ($1, 'totp_setup', $2, $3, $4, $5::jsonb)
+      RETURNING *`,
+      [userId, secretEncrypted, maxAttempts, nowPlusMinutes(ttlMinutes), asJson({})],
+    );
+
+    return toCamelRows(rows)[0];
+  },
+
+  async findActiveTotpSetupChallengeById({ userId, challengeId }, db = { query }) {
+    const { rows } = await db.query(
+      `SELECT * FROM auth_factors
+       WHERE id = $1
+         AND user_id = $2
+         AND factor_type = 'totp_setup'
+         AND consumed_at IS NULL
+         AND (expires_at IS NULL OR expires_at > NOW())
+       LIMIT 1`,
+      [challengeId, userId],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
+  async consumeAllTotpSetupChallenges({ userId }, db = { query }) {
+    await db.query(
+      `UPDATE auth_factors
+       SET consumed_at = NOW(),
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND factor_type = 'totp_setup'
+         AND consumed_at IS NULL`,
+      [userId],
+    );
+  },
+
   async verifyChallengeCode(challenge, code) {
     if (!challenge?.codeHash) {
       return false;

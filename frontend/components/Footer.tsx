@@ -79,6 +79,9 @@ export function Footer() {
             <Link href="/risk-disclosure" className="transition hover:text-white">
               Risk Disclosure
             </Link>
+            <Link href="/aml-kyc-policy" className="transition hover:text-white">
+              AML / KYC Policy
+            </Link>
             <Link href="/fees" className="transition hover:text-white">
               Fees
             </Link>

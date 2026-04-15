@@ -2,15 +2,25 @@ import { v4 as uuid } from "uuid";
 import { withTransaction } from "../db/transaction.js";
 import { auditLogsRepository } from "../repositories/auditLogsRepository.js";
 import { balancesRepository } from "../repositories/balancesRepository.js";
-import { depositAddressesRepository } from "../repositories/depositAddressesRepository.js";
+import { depositRecordsRepository } from "../repositories/depositRecordsRepository.js";
 import { ledgerEntriesRepository } from "../repositories/ledgerEntriesRepository.js";
+import { walletLedgerEntriesRepository } from "../repositories/walletLedgerEntriesRepository.js";
 import { walletTransactionsRepository } from "../repositories/walletTransactionsRepository.js";
 import { walletsRepository } from "../repositories/walletsRepository.js";
 import { toDecimal, toNumber } from "../utils/decimal.js";
 import { withdrawalsRepository } from "../repositories/withdrawalsRepository.js";
+import { withdrawalRequestsRepository } from "../repositories/withdrawalRequestsRepository.js";
 import { evaluateWithdrawalRisk } from "./complianceService.js";
 import { providers } from "./providerRegistry.js";
 import { jobQueue } from "../workers/jobQueue.js";
+import {
+  assertSupportedAssetNetwork,
+  getWalletAddressConfirmationCount,
+  getWithdrawalFeeRate,
+  normalizeWalletType,
+  validateWalletAddress,
+} from "./walletCatalogService.js";
+import { getOrCreateDepositAddress } from "./walletAddressService.js";
 
 const roundAmount = (value, precision = 10) => toNumber(value, precision);
 
@@ -47,22 +57,37 @@ const createLedger = async ({
   idempotencyKey,
   metadata,
 }, db) => {
-  return ledgerEntriesRepository.create(
+  const payload = {
+    userId,
+    walletId: wallet.id,
+    asset: wallet.asset,
+    direction,
+    amount: roundAmount(amount),
+    balanceAfter: roundAmount(wallet.totalBalance),
+    referenceType,
+    referenceId,
+    description,
+    idempotencyKey,
+    metadata,
+  };
+
+  const entry = await ledgerEntriesRepository.create(
     {
-      userId,
-      walletId: wallet.id,
-      asset: wallet.asset,
-      direction,
-      amount: roundAmount(amount),
-      balanceAfter: roundAmount(wallet.totalBalance),
-      referenceType,
-      referenceId,
-      description,
-      idempotencyKey,
-      metadata,
+      ...payload,
     },
     db,
   );
+
+  await walletLedgerEntriesRepository.create(
+    {
+      ...payload,
+      entryType: "wallet",
+      status: "completed",
+    },
+    db,
+  );
+
+  return entry;
 };
 
 export const getUserWallets = async (userId) => {
@@ -416,62 +441,58 @@ export const getWalletBalances = async (userId) => {
 };
 
 export const createDepositAddress = async ({ userId, asset, network, walletType }) => {
-  return runAtomic(null, async (db) => {
-    const wallet = await walletsRepository.create(
-      {
-        userId,
-        walletType,
-        asset,
-      },
-      db,
-    );
-
-    const response = await providers.custody.createDepositAddress({
-      userId,
-      walletId: wallet.id,
-      asset,
-      network,
-      walletType,
-    });
-
-    return depositAddressesRepository.create(
-      {
-        userId,
-        walletId: wallet.id,
-        asset,
-        network,
-        walletType,
-        address: response.address,
-        memo: response.memo,
-        providerName: response.provider,
-        providerReference: response.requestId,
-        expiresAt: response.expiresAt,
-        idempotencyKey: `deposit_address_${wallet.id}_${network}_${Date.now()}`,
-        metadata: {},
-      },
-      db,
-    );
-  });
+  return getOrCreateDepositAddress({ userId, asset, network, walletType });
 };
 
 export const createDepositRecord = async ({ user, asset, network, amount, walletType, address }) => {
   return runAtomic(null, async (db) => {
-    const wallet = await walletsRepository.findByUserTypeAsset({ userId: user.id, walletType, asset }, db);
+    const resolvedWalletType = normalizeWalletType(walletType);
+    const { asset: assetCode, network: networkCode } = assertSupportedAssetNetwork({ asset, network });
+    const wallet = await walletsRepository.create(
+      {
+        userId: user.id,
+        walletType: resolvedWalletType,
+        asset: assetCode,
+      },
+      db,
+    );
+    const requiredConfirmations = getWalletAddressConfirmationCount({ asset: assetCode, network: networkCode });
+    const idempotencyKey = `deposit_${user.id}_${assetCode}_${Date.now()}`;
 
     const transaction = await walletTransactionsRepository.create(
       {
         userId: user.id,
-        walletId: wallet?.id || null,
+        walletId: wallet.id,
         transactionType: "deposit",
-        asset,
-        walletType,
-        network,
+        asset: assetCode,
+        walletType: resolvedWalletType,
+        network: networkCode,
         amount: roundAmount(amount),
         fee: 0,
         destinationAddress: address,
         status: "pending_confirmation",
         riskScore: 5,
-        idempotencyKey: `deposit_${user.id}_${asset}_${Date.now()}`,
+        idempotencyKey,
+        metadata: {
+          confirmationsRequired: requiredConfirmations,
+        },
+      },
+      db,
+    );
+
+    await depositRecordsRepository.create(
+      {
+        userId: user.id,
+        walletId: wallet.id,
+        walletTransactionId: transaction.id,
+        asset: assetCode,
+        network: networkCode,
+        walletType: resolvedWalletType,
+        expectedAmount: roundAmount(amount),
+        status: "pending_confirmation",
+        confirmationsRequired: requiredConfirmations,
+        confirmationsCount: 0,
+        idempotencyKey,
         metadata: {},
       },
       db,
@@ -485,10 +506,10 @@ export const createDepositRecord = async ({ user, asset, network, amount, wallet
         resourceType: "transaction",
         resourceId: transaction.id,
         metadata: {
-          asset,
-          network,
+          asset: assetCode,
+          network: networkCode,
           amount: Number(transaction.amount),
-          walletType,
+          walletType: resolvedWalletType,
         },
       },
       db,
@@ -499,8 +520,8 @@ export const createDepositRecord = async ({ user, asset, network, amount, wallet
       {
         userId: user.id,
         transactionId: transaction.id,
-        asset,
-        network,
+        asset: assetCode,
+        network: networkCode,
         amount: Number(transaction.amount),
       },
       db,
@@ -524,6 +545,13 @@ export const createDepositRecord = async ({ user, asset, network, amount, wallet
 
 export const createWithdrawalRecord = async ({ user, asset, network, amount, address, walletType }) => {
   return runAtomic(null, async (db) => {
+    const resolvedWalletType = normalizeWalletType(walletType);
+    const { asset: assetCode, network: networkCode } = assertSupportedAssetNetwork({ asset, network });
+    const addressCheck = validateWalletAddress({ asset: assetCode, network: networkCode, address });
+    if (!addressCheck.valid) {
+      throw new Error(addressCheck.message);
+    }
+
     const recentWithdrawals = await walletTransactionsRepository.countRecentWithdrawals(user.id, 24, db);
 
     const risk = await evaluateWithdrawalRisk(
@@ -537,15 +565,16 @@ export const createWithdrawalRecord = async ({ user, asset, network, amount, add
     );
 
     const normalizedAmount = roundAmount(amount);
-    const fee = roundAmount(normalizedAmount * 0.001);
-    const idempotencyKey = `withdraw_${user.id}_${asset}_${Date.now()}`;
+    const fee = roundAmount(toDecimal(normalizedAmount).mul(toDecimal(getWithdrawalFeeRate())));
+    const totalDebit = roundAmount(toDecimal(normalizedAmount).plus(toDecimal(fee)));
+    const idempotencyKey = `withdraw_${user.id}_${assetCode}_${Date.now()}`;
 
     const wallet = await debitWallet(
       {
         userId: user.id,
-        walletType,
-        asset,
-        amount: normalizedAmount + fee,
+        walletType: resolvedWalletType,
+        asset: assetCode,
+        amount: totalDebit,
         referenceType: "withdrawal_request",
         referenceId: idempotencyKey,
         description: "Withdrawal debit",
@@ -556,10 +585,10 @@ export const createWithdrawalRecord = async ({ user, asset, network, amount, add
 
     const providerResponse = await providers.custody.requestWithdrawal({
       userId: user.id,
-      asset,
-      network,
+      asset: assetCode,
+      network: networkCode,
       amount: normalizedAmount,
-      address,
+      address: addressCheck.address,
     });
 
     const transaction = await walletTransactionsRepository.create(
@@ -567,15 +596,17 @@ export const createWithdrawalRecord = async ({ user, asset, network, amount, add
         userId: user.id,
         walletId: wallet.id,
         transactionType: "withdrawal",
-        asset,
-        walletType,
-        network,
+        asset: assetCode,
+        walletType: resolvedWalletType,
+        network: networkCode,
         amount: normalizedAmount,
         fee,
-        destinationAddress: address,
+        destinationAddress: addressCheck.address,
         status: risk.requiresManualReview ? "under_review" : "queued",
         riskScore: risk.score,
         idempotencyKey,
+        txHash: providerResponse.withdrawalId || null,
+        providerReference: providerResponse.withdrawalId || null,
         metadata: {
           providerWithdrawalId: providerResponse.withdrawalId,
         },
@@ -587,11 +618,33 @@ export const createWithdrawalRecord = async ({ user, asset, network, amount, add
       {
         userId: user.id,
         walletTransactionId: transaction.id,
-        asset,
-        network,
+        asset: assetCode,
+        network: networkCode,
         amount: normalizedAmount,
         fee,
-        destinationAddress: address,
+        destinationAddress: addressCheck.address,
+        providerName: providerResponse.provider,
+        providerReference: providerResponse.withdrawalId,
+        status: transaction.status,
+        riskScore: risk.score,
+        idempotencyKey,
+        metadata: {},
+      },
+      db,
+    );
+
+    await withdrawalRequestsRepository.create(
+      {
+        userId: user.id,
+        walletId: wallet.id,
+        walletTransactionId: transaction.id,
+        asset: assetCode,
+        network: networkCode,
+        walletType: resolvedWalletType,
+        amount: normalizedAmount,
+        fee,
+        totalDebit,
+        destinationAddress: addressCheck.address,
         providerName: providerResponse.provider,
         providerReference: providerResponse.withdrawalId,
         status: transaction.status,
@@ -610,8 +663,8 @@ export const createWithdrawalRecord = async ({ user, asset, network, amount, add
         resourceType: "transaction",
         resourceId: transaction.id,
         metadata: {
-          asset,
-          network,
+          asset: assetCode,
+          network: networkCode,
           amount: normalizedAmount,
           fee,
           riskScore: risk.score,
@@ -649,7 +702,10 @@ export const createWithdrawalRecord = async ({ user, asset, network, amount, add
 };
 
 export const listWalletHistory = async (userId) => {
-  const items = await walletTransactionsRepository.listByUser(userId);
+  const items = await walletTransactionsRepository.listByUser(userId, undefined, {
+    page: 1,
+    pageSize: 200,
+  });
 
   return items.map((entry) => ({
     id: entry.id,
@@ -661,13 +717,15 @@ export const listWalletHistory = async (userId) => {
     fee: Number(entry.fee),
     status: entry.status,
     address: entry.destinationAddress,
+    txHash: entry.txHash || null,
+    sourceAddress: entry.sourceAddress || null,
     riskScore: Number(entry.riskScore),
     createdAt: entry.createdAt,
   }));
 };
 
 export const listLedgerEntries = async (userId, limit = 100) => {
-  const rows = await ledgerEntriesRepository.listByUser(userId, limit);
+  const rows = await walletLedgerEntriesRepository.listByUser(userId, limit);
 
   return rows.map((entry) => ({
     id: entry.id,

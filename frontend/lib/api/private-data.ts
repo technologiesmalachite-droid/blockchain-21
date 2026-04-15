@@ -105,8 +105,116 @@ export type WalletHistoryItem = {
   fee: number;
   status: string;
   address: string;
+  sourceAddress?: string | null;
+  txHash?: string | null;
+  providerReference?: string | null;
+  failureReason?: string | null;
   riskScore: number;
   createdAt: string;
+  completedAt?: string | null;
+  cancelledAt?: string | null;
+};
+
+export type WalletSummary = {
+  totalPortfolioBalance: number;
+  assets: Array<{
+    asset: string;
+    totalBalance: number;
+    availableBalance: number;
+    lockedBalance: number;
+    usdPrice: number;
+    fiatEquivalent: number;
+    wallets: WalletRecord[];
+  }>;
+  supportedAssets: Array<{
+    asset: string;
+    displayName: string;
+    precision: number;
+    networks: string[];
+  }>;
+};
+
+export type WalletAssetDetail = {
+  asset: string;
+  displayName: string;
+  precision: number;
+  networks: string[];
+  walletType?: "spot" | "funding" | null;
+  totals: {
+    totalBalance: number;
+    availableBalance: number;
+    lockedBalance: number;
+  };
+  wallets: WalletRecord[];
+  addresses: Array<{
+    id: string;
+    network: string;
+    walletType: "spot" | "funding";
+    address: string;
+    memo?: string | null;
+    status: string;
+    expiresAt?: string | null;
+    createdAt: string;
+  }>;
+  recentTransactions: WalletHistoryItem[];
+};
+
+export type WalletTransactionsResponse = {
+  items: WalletHistoryItem[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+  filters: Record<string, unknown>;
+};
+
+export type WalletDepositAddress = {
+  id?: string;
+  address: string;
+  memo?: string | null;
+  network: string;
+  asset: string;
+  walletType: "spot" | "funding";
+  expiresAt?: string | null;
+  memoRequired?: boolean;
+  warnings?: string[];
+  qrCodeDataUrl?: string;
+};
+
+export type WalletWithdrawalFeeEstimate = {
+  asset: string;
+  network: string;
+  amount: number;
+  feeRate: number;
+  feeAmount: number;
+  totalDebit: number;
+  warnings: string[];
+};
+
+export type WalletSwapQuote = {
+  quoteId: string;
+  walletType: "spot" | "funding";
+  fromAsset: string;
+  toAsset: string;
+  fromAmount: number;
+  toAmount: number;
+  rate: number;
+  feeAmount: number;
+  feeRateBps: number;
+  slippageBps: number;
+  status: string;
+  quoteExpiresAt: string;
+  createdAt: string;
+};
+
+export type WalletSwapResult = WalletSwapQuote & {
+  transactionId: string;
+  txHash: string;
+  conversionId: string;
+  tradeId: string;
+  completedAt: string;
 };
 
 export type LedgerEntry = {
@@ -132,6 +240,8 @@ export type ProfileResponse = {
     status: string;
     antiPhishingCode?: string;
     twoFactorEnabled?: boolean;
+    twoFactorEnabledAt?: string;
+    twoFactorRecoveryCodesRemaining?: number;
     emailVerified?: boolean;
     phoneVerified?: boolean;
     kycStatus?: string;
@@ -359,6 +469,16 @@ export const fetchWalletBalances = () =>
     auth: "required",
   });
 
+export const fetchWalletSummary = () =>
+  apiRequest<WalletSummary>("/wallet/summary", {
+    auth: "required",
+  });
+
+export const fetchWalletAssetDetail = (asset: string, walletType?: "spot" | "funding") =>
+  apiRequest<WalletAssetDetail>(`/wallet/assets/${encodeURIComponent(asset)}${walletType ? `?walletType=${walletType}` : ""}`, {
+    auth: "required",
+  });
+
 export const fetchWallets = () =>
   apiRequest<{ items: WalletRecord[] }>("/wallet/wallets", {
     auth: "required",
@@ -384,14 +504,83 @@ export const transferWalletFunds = (payload: {
   });
 
 export const requestDepositAddress = (payload: { asset: string; network: string; walletType: "spot" | "funding" }) =>
-  apiRequest<{ address: string; memo?: string; expiresAt?: string }>("/wallet/deposit-address", {
+  apiRequest<WalletDepositAddress>("/wallet/deposit-address", {
     auth: "required",
     method: "POST",
     body: payload,
   });
 
-export const fetchWalletHistory = () =>
-  apiRequest<{ items: WalletHistoryItem[] }>("/wallet/history", {
+export const fetchWalletAddresses = (asset: string, walletType?: "spot" | "funding") =>
+  apiRequest<{ items: WalletDepositAddress[] }>(`/wallet/deposit-addresses?asset=${encodeURIComponent(asset)}${walletType ? `&walletType=${walletType}` : ""}`, {
+    auth: "required",
+  });
+
+export const fetchWalletHistory = (params?: {
+  page?: number;
+  pageSize?: number;
+  asset?: string;
+  walletType?: "spot" | "funding";
+  type?: string;
+  status?: string;
+  network?: string;
+  search?: string;
+}) => {
+  const search = new URLSearchParams();
+  if (params?.page) search.set("page", String(params.page));
+  if (params?.pageSize) search.set("pageSize", String(params.pageSize));
+  if (params?.asset) search.set("asset", params.asset);
+  if (params?.walletType) search.set("walletType", params.walletType);
+  if (params?.type) search.set("type", params.type);
+  if (params?.status) search.set("status", params.status);
+  if (params?.network) search.set("network", params.network);
+  if (params?.search) search.set("search", params.search);
+
+  return apiRequest<WalletTransactionsResponse>(`/wallet/history${search.toString() ? `?${search.toString()}` : ""}`, {
+    auth: "required",
+  });
+};
+
+export type NotificationItem = {
+  id: string;
+  category: string;
+  severity: "info" | "success" | "warning" | "critical";
+  title: string;
+  message: string;
+  actionUrl?: string | null;
+  metadata: Record<string, unknown>;
+  readAt?: string | null;
+  createdAt: string;
+};
+
+export type NotificationListResponse = {
+  items: NotificationItem[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+  unreadCount: number;
+};
+
+export type SupportTicket = {
+  id: string;
+  subject: string;
+  category: string;
+  priority: "low" | "normal" | "high" | "urgent";
+  status: string;
+  message: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export const fetchWalletTransactionById = (id: string) =>
+  apiRequest<{ transaction: WalletHistoryItem }>(`/wallet/transactions/${encodeURIComponent(id)}`, {
+    auth: "required",
+  });
+
+export const fetchWalletTransactionByHash = (hash: string) =>
+  apiRequest<{ transaction: WalletHistoryItem }>(`/wallet/transactions/hash/${encodeURIComponent(hash)}`, {
     auth: "required",
   });
 
@@ -405,8 +594,31 @@ export const fetchProfile = () =>
     auth: "required",
   });
 
+export const updateProfile = (payload: {
+  fullName: string;
+  countryCode: string;
+  antiPhishingCode?: string;
+}) =>
+  apiRequest<ProfileResponse & { message: string }>("/user/profile", {
+    auth: "required",
+    method: "PUT",
+    body: payload,
+  });
+
 export const createDepositRequest = (payload: { asset: string; network: string; amount: number; walletType: "spot" | "funding"; address?: string }) =>
-  apiRequest<{ message: string }>("/wallet/deposit-request", {
+  apiRequest<{ message: string; record: WalletHistoryItem }>("/wallet/deposit-request", {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });
+
+export const estimateWithdrawFee = (payload: {
+  asset: string;
+  network: string;
+  amount: number;
+  walletType: "spot" | "funding";
+}) =>
+  apiRequest<{ estimate: WalletWithdrawalFeeEstimate }>("/wallet/withdraw-estimate", {
     auth: "required",
     method: "POST",
     body: payload,
@@ -420,7 +632,27 @@ export const createWithdrawRequest = (payload: {
   walletType: "spot" | "funding";
   twoFactorCode: string;
 }) =>
-  apiRequest<{ message: string }>("/wallet/withdraw-request", {
+  apiRequest<{ message: string; record: WalletHistoryItem & { feePreview?: WalletWithdrawalFeeEstimate } }>("/wallet/withdraw-request", {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });
+
+export const createWalletSwapQuote = (payload: {
+  fromAsset: string;
+  toAsset: string;
+  amount: number;
+  walletType?: "spot" | "funding";
+  slippageBps?: number;
+}) =>
+  apiRequest<{ message: string; quote: WalletSwapQuote }>("/wallet/swap/quote", {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });
+
+export const confirmWalletSwap = (payload: { quoteId: string }) =>
+  apiRequest<{ message: string; swap: WalletSwapResult }>("/wallet/swap/confirm", {
     auth: "required",
     method: "POST",
     body: payload,
@@ -658,6 +890,48 @@ export const resolveComplianceCase = (caseId: string, resolution: string) =>
 export const fetchAdminAuditLogs = () =>
   apiRequest<{ items: Array<Record<string, unknown>> }>("/admin/audit-logs", {
     auth: "required",
+  });
+
+export const fetchNotifications = (params?: { page?: number; pageSize?: number; unreadOnly?: boolean }) => {
+  const search = new URLSearchParams();
+  if (params?.page) search.set("page", String(params.page));
+  if (params?.pageSize) search.set("pageSize", String(params.pageSize));
+  if (params?.unreadOnly !== undefined) search.set("unreadOnly", params.unreadOnly ? "true" : "false");
+
+  return apiRequest<NotificationListResponse>(`/notifications${search.toString() ? `?${search.toString()}` : ""}`, {
+    auth: "required",
+  });
+};
+
+export const markNotificationRead = (id: string) =>
+  apiRequest<{ message: string; notification: NotificationItem }>(`/notifications/${encodeURIComponent(id)}/read`, {
+    auth: "required",
+    method: "POST",
+    body: {},
+  });
+
+export const markAllNotificationsRead = () =>
+  apiRequest<{ message: string }>("/notifications/read-all", {
+    auth: "required",
+    method: "POST",
+    body: {},
+  });
+
+export const fetchSupportTickets = () =>
+  apiRequest<{ items: SupportTicket[] }>("/support", {
+    auth: "required",
+  });
+
+export const createSupportTicket = (payload: {
+  subject: string;
+  category: string;
+  priority: "low" | "normal" | "high" | "urgent";
+  message: string;
+}) =>
+  apiRequest<{ message: string; ticket: SupportTicket }>("/support", {
+    auth: "required",
+    method: "POST",
+    body: payload,
   });
 
 export const createPaymentIntent = (payload: {

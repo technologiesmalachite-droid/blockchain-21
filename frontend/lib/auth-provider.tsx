@@ -9,8 +9,10 @@ import {
   loginRequest,
   logoutRequest,
   registerRequest,
+  verifyTwoFactorLoginRequest,
   type LoginPayload,
   type RegisterPayload,
+  type TwoFactorLoginChallenge,
 } from "@/lib/api/auth";
 import { ApiRequestError } from "@/lib/api/client";
 import {
@@ -43,13 +45,20 @@ type GoogleAuthOptions = {
   privacyAccepted?: boolean;
 };
 
+type SignInResult = {
+  requiresTwoFactor: boolean;
+  loginToken?: string;
+  message?: string;
+};
+
 type AuthContextType = {
   user: AuthUser | null;
   status: AuthStatus;
   isAuthenticated: boolean;
-  signIn: (payload: LoginPayload) => Promise<void>;
+  signIn: (payload: LoginPayload) => Promise<SignInResult>;
+  verifyTwoFactorLogin: (payload: { loginToken: string; code: string }) => Promise<void>;
   signUp: (payload: RegisterPayload) => Promise<void>;
-  signInWithGoogle: (options?: GoogleAuthOptions) => Promise<void>;
+  signInWithGoogle: (options?: GoogleAuthOptions) => Promise<SignInResult>;
   signUpWithGoogle: (options?: GoogleAuthOptions) => Promise<void>;
   resendEmailVerification: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -62,6 +71,15 @@ const GOOGLE_INTENT_STORAGE_KEY = "malachitex.firebase.google.intent.v1";
 const EMAIL_VERIFICATION_REQUIRED_CODE = "auth/email-not-verified";
 
 const isAuthError = (error: unknown) => error instanceof ApiRequestError && (error.status === 401 || error.status === 403);
+
+const isTwoFactorChallenge = (value: unknown): value is TwoFactorLoginChallenge =>
+  Boolean(
+    value &&
+      typeof value === "object" &&
+      "requiresTwoFactor" in value &&
+      (value as { requiresTwoFactor?: boolean }).requiresTwoFactor === true &&
+      "loginToken" in value,
+  );
 
 const saveGoogleIntent = (options?: GoogleAuthOptions) => {
   if (typeof window === "undefined" || !options) {
@@ -96,9 +114,18 @@ const clearGoogleIntent = () => {
   window.sessionStorage.removeItem(GOOGLE_INTENT_STORAGE_KEY);
 };
 
+const signInSuccessResult = (): SignInResult => ({ requiresTwoFactor: false });
+
+const signInChallengeResult = (challenge: TwoFactorLoginChallenge): SignInResult => ({
+  requiresTwoFactor: true,
+  loginToken: challenge.loginToken,
+  message: challenge.message,
+});
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
+  const [sessionBootstrapped, setSessionBootstrapped] = useState(false);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [syncingFirebaseSession, setSyncingFirebaseSession] = useState(false);
@@ -112,6 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const existing = readSession();
     setSession(existing);
     setStatus(existing ? "authenticated" : "unauthenticated");
+    setSessionBootstrapped(true);
   }, []);
 
   useEffect(() => {
@@ -224,12 +252,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           privacyAccepted: intent?.privacyAccepted,
         }),
       )
-      .then((backendSession) => {
+      .then(async (result) => {
         if (!active) {
           return;
         }
 
-        saveSession(backendSession);
+        if (isTwoFactorChallenge(result)) {
+          setAuthModal({
+            open: true,
+            message: result.message || "Two-factor verification is required. Continue from the sign-in page.",
+          });
+          if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+            const next = `${window.location.pathname}${window.location.search}`;
+            window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+          }
+          return;
+        }
+
+        saveSession(result);
         clearGoogleIntent();
         setAuthModal((current) => ({ ...current, open: false }));
       })
@@ -306,11 +346,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         const idToken = await firebaseCredential.user.getIdToken();
-        const backendSession = await firebaseSessionRequest({ idToken });
-        saveSession(backendSession);
+        const result = await firebaseSessionRequest({ idToken });
+
+        if (isTwoFactorChallenge(result)) {
+          return signInChallengeResult(result);
+        }
+
+        saveSession(result);
         clearGoogleIntent();
         setAuthModal((current) => ({ ...current, open: false }));
-        return;
+        return signInSuccessResult();
       } catch (firebaseError) {
         if (firebaseError instanceof ApiRequestError) {
           throw firebaseError;
@@ -330,18 +375,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw new Error(friendlyFirebaseError || "Unable to authenticate with Firebase.");
         }
 
-        if (
-          firebaseCode === "auth/configuration-not-found" &&
-          !friendlyFirebaseError
-        ) {
+        if (firebaseCode === "auth/configuration-not-found" && !friendlyFirebaseError) {
           throw new Error("Authentication is not configured yet. Please contact support.");
         }
       }
 
       const result = await loginRequest(payload);
+      if (isTwoFactorChallenge(result)) {
+        return signInChallengeResult(result);
+      }
+
       saveSession(result);
       clearGoogleIntent();
       setAuthModal((current) => ({ ...current, open: false }));
+      return signInSuccessResult();
     } catch (error) {
       const firebaseCode = getFirebaseErrorCode(error);
       const preserveFirebaseSession = firebaseCode === EMAIL_VERIFICATION_REQUIRED_CODE;
@@ -352,6 +399,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       throw error;
     }
+  };
+
+  const verifyTwoFactorLogin = async ({ loginToken, code }: { loginToken: string; code: string }) => {
+    const sessionPayload = await verifyTwoFactorLoginRequest({ loginToken, code });
+    saveSession(sessionPayload);
+    clearGoogleIntent();
+    setAuthModal((current) => ({ ...current, open: false }));
   };
 
   const signUp = async (payload: RegisterPayload) => {
@@ -389,22 +443,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const googleResult = await signInWithGoogle();
 
     if (googleResult.redirected) {
-      return;
+      return signInSuccessResult();
     }
 
     const idToken = await googleResult.credential.user.getIdToken();
 
     try {
-      const backendSession = await firebaseSessionRequest({
+      const result = await firebaseSessionRequest({
         idToken,
         countryCode: options?.countryCode,
         termsAccepted: options?.termsAccepted,
         privacyAccepted: options?.privacyAccepted,
       });
 
-      saveSession(backendSession);
+      if (isTwoFactorChallenge(result)) {
+        return signInChallengeResult(result);
+      }
+
+      saveSession(result);
       clearGoogleIntent();
       setAuthModal((current) => ({ ...current, open: false }));
+      return signInSuccessResult();
     } catch (error) {
       await signOutUser().catch(() => {});
       throw error;
@@ -418,7 +477,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("Terms and privacy consent are required before continuing with Google.");
     }
 
-    return signInWithGoogleAccount(options);
+    const result = await signInWithGoogleAccount(options);
+    if (result.requiresTwoFactor) {
+      await signOutUser().catch(() => {});
+      throw new Error("This account already exists with two-factor authentication enabled. Please sign in instead.");
+    }
   };
 
   const resendEmailVerification = async () => {
@@ -450,8 +513,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const closeAuthModal = () => setAuthModal((current) => ({ ...current, open: false }));
 
+  const authBootstrapPending = !sessionBootstrapped || !firebaseReady;
   const resolvedStatus: AuthStatus =
-    status === "loading" || (firebaseReady && syncingFirebaseSession && !session?.tokens.accessToken)
+    authBootstrapPending || status === "loading" || (syncingFirebaseSession && !session?.tokens.accessToken)
       ? "loading"
       : status;
 
@@ -461,6 +525,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status: resolvedStatus,
       isAuthenticated: resolvedStatus === "authenticated",
       signIn,
+      verifyTwoFactorLogin,
       signUp,
       signInWithGoogle: signInWithGoogleHandler,
       signUpWithGoogle: signUpWithGoogleHandler,

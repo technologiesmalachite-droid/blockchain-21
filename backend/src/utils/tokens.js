@@ -30,5 +30,30 @@ export const signRefreshToken = (user) => {
   return jwt.sign({ sub: user.id, role: user.role }, env.jwtRefreshSecret, { expiresIn: "7d" });
 };
 
+export const signTwoFactorLoginToken = (user) => {
+  assertTokenSecret(env.jwtSecret, "JWT_SECRET");
+  return jwt.sign(
+    {
+      sub: user.id,
+      role: user.role,
+      email: user.email,
+      purpose: "2fa_login",
+    },
+    env.jwtSecret,
+    { expiresIn: `${env.twoFactorLoginTokenTtlSeconds}s` },
+  );
+};
+
 export const verifyAccessToken = (token) => jwt.verify(token, env.jwtSecret);
 export const verifyRefreshToken = (token) => jwt.verify(token, env.jwtRefreshSecret);
+export const verifyTwoFactorLoginToken = (token) => {
+  const decoded = jwt.verify(token, env.jwtSecret);
+
+  if (!decoded || decoded.purpose !== "2fa_login") {
+    const error = new Error("Invalid two-factor login token.");
+    error.code = "INVALID_2FA_LOGIN_TOKEN";
+    throw error;
+  }
+
+  return decoded;
+};

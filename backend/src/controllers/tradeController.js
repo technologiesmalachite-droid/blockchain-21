@@ -7,6 +7,7 @@ import {
   listTradeHistory,
   placeSpotOrder,
 } from "../services/tradingEngine.js";
+import { notifyUser } from "../services/notificationService.js";
 
 const isInfrastructureIssue = (error) => {
   if (!error) {
@@ -61,6 +62,18 @@ export const createOrder = async (req, res) => {
       walletType: req.validated.body.walletType || "spot",
     });
 
+    await notifyUser({
+      userId: req.user.id,
+      category: "trading",
+      severity: "info",
+      title: "Order placed",
+      message: `${result.order.side} ${result.order.quantity} ${result.order.symbol} ${result.order.orderType} order is ${result.order.status}.`,
+      actionUrl: "/orders",
+      metadata: {
+        orderId: result.order.id,
+      },
+    });
+
     return res.status(201).json({ order: result.order, quote: result.quote, message: "Order accepted." });
   } catch (error) {
     return sendTradingError(res, error, "Unable to place order.");
@@ -72,6 +85,18 @@ export const cancelOrder = async (req, res) => {
     const order = await cancelSpotOrder({
       user: req.user,
       orderId: req.params.orderId || req.params.id,
+    });
+
+    await notifyUser({
+      userId: req.user.id,
+      category: "trading",
+      severity: "warning",
+      title: "Order cancelled",
+      message: `Order ${order.symbol} was cancelled successfully.`,
+      actionUrl: "/orders",
+      metadata: {
+        orderId: order.id,
+      },
     });
 
     return res.json({ order, message: "Order cancelled." });

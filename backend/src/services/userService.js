@@ -4,6 +4,7 @@ import { withTransaction } from "../db/transaction.js";
 import { auditLogsRepository } from "../repositories/auditLogsRepository.js";
 import { usersRepository } from "../repositories/usersRepository.js";
 import { walletsRepository } from "../repositories/walletsRepository.js";
+import { parseTwoFactorBackupCodeHashes } from "./twoFactorService.js";
 
 const nowIso = () => new Date().toISOString();
 
@@ -18,6 +19,8 @@ export const sanitizeUser = (user) => ({
   countryCode: user.countryCode,
   antiPhishingCode: user.antiPhishingCode,
   twoFactorEnabled: user.twoFactorEnabled,
+  twoFactorEnabledAt: user.twoFactorEnabledAt,
+  twoFactorRecoveryCodesRemaining: parseTwoFactorBackupCodeHashes(user.twoFactorBackupCode).length,
   emailVerified: user.emailVerified,
   emailVerifiedAt: user.emailVerifiedAt,
   phoneVerified: user.phoneVerified,
@@ -69,6 +72,7 @@ export const createUser = async ({
         countryCode: countryCode || "US",
         antiPhishingCode: "",
         twoFactorEnabled: false,
+        twoFactorEnabledAt: null,
         twoFactorSecret: null,
         twoFactorBackupCode: null,
         emailVerified: false,
@@ -130,7 +134,7 @@ export const createUser = async ({
   });
 };
 
-export const authenticateUser = async ({ email, password, twoFactorCode }) => {
+export const authenticateUserCredentials = async ({ email, password }) => {
   const user = await usersRepository.findByEmail(email);
 
   if (!user) {
@@ -149,12 +153,6 @@ export const authenticateUser = async ({ email, password, twoFactorCode }) => {
 
   if (user.accountRestrictions?.frozen) {
     throw new Error("This account is frozen pending compliance review.");
-  }
-
-  if (user.twoFactorEnabled) {
-    if (!twoFactorCode || twoFactorCode !== user.twoFactorBackupCode) {
-      throw new Error("Two-factor verification is required.");
-    }
   }
 
   return user;
@@ -313,6 +311,7 @@ export const findOrCreateFirebaseUser = async ({
           countryCode: resolvedCountryCode,
           antiPhishingCode: "",
           twoFactorEnabled: false,
+          twoFactorEnabledAt: null,
           twoFactorSecret: null,
           twoFactorBackupCode: null,
           emailVerified: emailVerified ? true : false,

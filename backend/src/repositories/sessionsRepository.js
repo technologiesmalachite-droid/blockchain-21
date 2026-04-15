@@ -45,6 +45,53 @@ export const sessionsRepository = {
     );
   },
 
+  async revokeByIdForUser({ sessionId, userId }, db = { query }) {
+    const { rows } = await db.query(
+      `UPDATE refresh_sessions
+       SET revoked_at = NOW()
+       WHERE id = $1
+         AND user_id = $2
+         AND revoked_at IS NULL
+       RETURNING *`,
+      [sessionId, userId],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
+  async revokeOthers({ userId, currentRefreshToken = null }, db = { query }) {
+    if (currentRefreshToken) {
+      const keepTokenHash = hashToken(currentRefreshToken);
+      await db.query(
+        `UPDATE refresh_sessions
+         SET revoked_at = NOW()
+         WHERE user_id = $1
+           AND token_hash <> $2
+           AND revoked_at IS NULL`,
+        [userId, keepTokenHash],
+      );
+      return;
+    }
+
+    await db.query(
+      `UPDATE refresh_sessions
+       SET revoked_at = NOW()
+       WHERE user_id = $1
+         AND revoked_at IS NULL`,
+      [userId],
+    );
+  },
+
+  async revokeAllByUser(userId, db = { query }) {
+    await db.query(
+      `UPDATE refresh_sessions
+       SET revoked_at = NOW()
+       WHERE user_id = $1
+         AND revoked_at IS NULL`,
+      [userId],
+    );
+  },
+
   async listActiveByUser(userId, db = { query }) {
     const { rows } = await db.query(
       `SELECT * FROM refresh_sessions

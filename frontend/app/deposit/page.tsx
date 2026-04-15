@@ -1,13 +1,26 @@
 "use client";
 
 import { Copy } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ContentSection, PageHero } from "@/components/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { createDepositRequest, requestDepositAddress } from "@/lib/api/private-data";
+import { createDepositRequest, requestDepositAddress, type WalletDepositAddress } from "@/lib/api/private-data";
 import { useDemo } from "@/lib/demo-provider";
+
+const assetNetworks: Record<string, string[]> = {
+  BTC: ["BTC"],
+  ETH: ["ERC20"],
+  BNB: ["BEP20"],
+  BCH: ["BCH"],
+  LTC: ["LTC"],
+  SOL: ["SOL"],
+  TON: ["TON"],
+  TRON: ["TRON"],
+  USDC: ["ERC20", "SOL", "TRC20"],
+  USDT: ["TRC20", "ERC20", "BEP20"],
+};
 
 export default function DepositPage() {
   const { submitToast } = useDemo();
@@ -15,20 +28,21 @@ export default function DepositPage() {
   const [network, setNetwork] = useState("TRC20");
   const [walletType, setWalletType] = useState<"spot" | "funding">("funding");
   const [amount, setAmount] = useState("1500");
-  const [address, setAddress] = useState("");
-  const [memo, setMemo] = useState<string | undefined>();
+  const [record, setRecord] = useState<WalletDepositAddress | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const availableNetworks = useMemo(() => assetNetworks[asset] || ["ERC20"], [asset]);
 
   const generateAddress = async () => {
     setBusy(true);
 
     try {
       const response = await requestDepositAddress({ asset, network, walletType });
-      setAddress(response.address);
-      setMemo(response.memo);
-      submitToast("Deposit address ready", "Use this address for incoming funds on the selected network.");
-    } catch {
-      submitToast("Address unavailable", "Unable to generate a deposit address right now.");
+      setRecord(response);
+      submitToast("Deposit address ready", "Use this address only for the selected asset and network.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to generate a deposit address right now.";
+      submitToast("Address unavailable", message);
     } finally {
       setBusy(false);
     }
@@ -42,7 +56,7 @@ export default function DepositPage() {
       return;
     }
 
-    if (!address) {
+    if (!record?.address) {
       submitToast("Generate address first", "Create a deposit address before creating a deposit request.");
       return;
     }
@@ -50,10 +64,11 @@ export default function DepositPage() {
     setBusy(true);
 
     try {
-      await createDepositRequest({ asset, network, amount: parsedAmount, walletType, address });
-      submitToast("Deposit intent created", "Your deposit is now tracked in wallet activity.");
-    } catch {
-      submitToast("Request unavailable", "We couldn't create your deposit request. Please try again.");
+      const response = await createDepositRequest({ asset, network, amount: parsedAmount, walletType, address: record.address });
+      submitToast("Deposit intent created", response.message || "Your deposit is now tracked in wallet activity.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "We couldn't create your deposit request. Please try again.";
+      submitToast("Request unavailable", message);
     } finally {
       setBusy(false);
     }
@@ -72,15 +87,25 @@ export default function DepositPage() {
           <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
             <Card>
               <div className="grid gap-4 md:grid-cols-2">
-                <select value={asset} onChange={(event) => setAsset(event.target.value)} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white">
-                  <option>USDT</option>
-                  <option>BTC</option>
-                  <option>ETH</option>
+                <select
+                  value={asset}
+                  onChange={(event) => {
+                    const nextAsset = event.target.value;
+                    setAsset(nextAsset);
+                    const firstNetwork = assetNetworks[nextAsset]?.[0] || "ERC20";
+                    setNetwork(firstNetwork);
+                    setRecord(null);
+                  }}
+                  className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
+                >
+                  {Object.keys(assetNetworks).map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
                 </select>
                 <select value={network} onChange={(event) => setNetwork(event.target.value)} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white">
-                  <option>TRC20</option>
-                  <option>ERC20</option>
-                  <option>BEP20</option>
+                  {availableNetworks.map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
                 </select>
                 <select value={walletType} onChange={(event) => setWalletType(event.target.value as "spot" | "funding")} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white">
                   <option value="funding">Funding wallet</option>
@@ -97,15 +122,15 @@ export default function DepositPage() {
                   </Button>
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-                  <span className="truncate text-sm text-white">{address || "Generate a new address to continue"}</span>
+                  <span className="truncate text-sm text-white">{record?.address || "Generate a new address to continue"}</span>
                   <button
                     type="button"
-                    disabled={!address}
+                    disabled={!record?.address}
                     onClick={() => {
-                      if (!address) {
+                      if (!record?.address) {
                         return;
                       }
-                      navigator.clipboard.writeText(address);
+                      navigator.clipboard.writeText(record.address);
                       submitToast("Address copied", "Deposit address copied to clipboard.");
                     }}
                     className="text-muted hover:text-white disabled:opacity-40"
@@ -113,8 +138,17 @@ export default function DepositPage() {
                     <Copy className="h-4 w-4" />
                   </button>
                 </div>
-                {memo ? <p className="mt-2 text-xs text-muted">Memo/Tag: {memo}</p> : null}
-                <div className="mt-6 flex h-40 items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/5 text-sm text-muted">QR code placeholder</div>
+                {record?.memo ? <p className="mt-2 text-xs text-muted">Memo/Tag: {record.memo}</p> : null}
+                {record?.warnings?.length ? (
+                  <div className="mt-2 space-y-1 text-xs text-muted">
+                    {record.warnings.map((warning) => (
+                      <p key={warning}>{warning}</p>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="mt-6 flex h-40 items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/5 text-sm text-muted">
+                  {record?.qrCodeDataUrl ? <img src={record.qrCodeDataUrl} alt="Deposit QR code" className="h-36 w-36 rounded-xl" /> : "QR code preview"}
+                </div>
               </div>
             </Card>
             <Card>
