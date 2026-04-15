@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  firebaseSession,
   getSessionHistory,
   login,
   logout,
@@ -12,6 +13,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import {
+  firebaseSessionSchema,
   loginSchema,
   registerSchema,
   sendVerificationSchema,
@@ -25,6 +27,7 @@ const router = Router();
 
 router.post("/register", authAttemptLimiter, validate(registerSchema), asyncHandler(register));
 router.post("/login", authAttemptLimiter, validate(loginSchema), asyncHandler(login));
+router.post("/firebase/session", authAttemptLimiter, validate(firebaseSessionSchema), asyncHandler(firebaseSession));
 router.post("/logout", asyncHandler(logout));
 router.post("/refresh", authAttemptLimiter, asyncHandler(refresh));
 

@@ -6,12 +6,13 @@ import { depositAddressesRepository } from "../repositories/depositAddressesRepo
 import { ledgerEntriesRepository } from "../repositories/ledgerEntriesRepository.js";
 import { walletTransactionsRepository } from "../repositories/walletTransactionsRepository.js";
 import { walletsRepository } from "../repositories/walletsRepository.js";
+import { toDecimal, toNumber } from "../utils/decimal.js";
 import { withdrawalsRepository } from "../repositories/withdrawalsRepository.js";
 import { evaluateWithdrawalRisk } from "./complianceService.js";
 import { providers } from "./providerRegistry.js";
 import { jobQueue } from "../workers/jobQueue.js";
 
-const roundAmount = (value, precision = 10) => Number(Number(value).toFixed(precision));
+const roundAmount = (value, precision = 10) => toNumber(value, precision);
 
 const runAtomic = async (db, executor) => {
   if (db) {
@@ -123,21 +124,27 @@ export const debitWallet = async ({ userId, walletType, asset, amount, reference
     }
 
     const normalized = roundAmount(amount);
+    const normalizedDecimal = toDecimal(normalized);
+    const walletAvailable = toDecimal(wallet.availableBalance);
 
-    if (Number(wallet.availableBalance) < normalized) {
+    if (walletAvailable.lessThan(normalizedDecimal)) {
       throw new Error(`Insufficient available ${asset} balance.`);
     }
 
-    const totalBalance = lockOnly ? Number(wallet.totalBalance) : roundAmount(Number(wallet.totalBalance) - normalized);
-    const availableBalance = roundAmount(Number(wallet.availableBalance) - normalized);
-    const lockedBalance = lockOnly ? roundAmount(Number(wallet.lockedBalance) + normalized) : Number(wallet.lockedBalance);
+    const totalBalance = lockOnly
+      ? toDecimal(wallet.totalBalance)
+      : toDecimal(wallet.totalBalance).minus(normalizedDecimal);
+    const availableBalance = walletAvailable.minus(normalizedDecimal);
+    const lockedBalance = lockOnly
+      ? toDecimal(wallet.lockedBalance).plus(normalizedDecimal)
+      : toDecimal(wallet.lockedBalance);
 
     const updated = await balancesRepository.updateWalletBalances(
       {
         walletId: wallet.id,
-        totalBalance,
-        availableBalance,
-        lockedBalance,
+        totalBalance: totalBalance.toString(),
+        availableBalance: availableBalance.toString(),
+        lockedBalance: lockedBalance.toString(),
       },
       tx,
     );
@@ -162,20 +169,34 @@ export const debitWallet = async ({ userId, walletType, asset, amount, reference
 
 export const creditWallet = async ({ userId, walletType, asset, amount, referenceType, referenceId, description, idempotencyKey }, db) => {
   return runAtomic(db, async (tx) => {
-    const wallet = await balancesRepository.lockWallet({ userId, walletType, asset }, tx);
+    let wallet = await balancesRepository.lockWallet({ userId, walletType, asset }, tx);
+
+    if (!wallet) {
+      await walletsRepository.create(
+        {
+          userId,
+          walletType,
+          asset,
+          metadata: {},
+        },
+        tx,
+      );
+      wallet = await balancesRepository.lockWallet({ userId, walletType, asset }, tx);
+    }
 
     if (!wallet) {
       throw new Error(`Wallet not found for ${asset} (${walletType}).`);
     }
 
     const normalized = roundAmount(amount);
+    const normalizedDecimal = toDecimal(normalized);
 
     const updated = await balancesRepository.updateWalletBalances(
       {
         walletId: wallet.id,
-        totalBalance: roundAmount(Number(wallet.totalBalance) + normalized),
-        availableBalance: roundAmount(Number(wallet.availableBalance) + normalized),
-        lockedBalance: Number(wallet.lockedBalance),
+        totalBalance: toDecimal(wallet.totalBalance).plus(normalizedDecimal).toString(),
+        availableBalance: toDecimal(wallet.availableBalance).plus(normalizedDecimal).toString(),
+        lockedBalance: toDecimal(wallet.lockedBalance).toString(),
       },
       tx,
     );
@@ -198,6 +219,50 @@ export const creditWallet = async ({ userId, walletType, asset, amount, referenc
   });
 };
 
+export const consumeLockedBalance = async ({ userId, walletType, asset, amount, referenceType, referenceId, description, idempotencyKey }, db) => {
+  return runAtomic(db, async (tx) => {
+    const wallet = await balancesRepository.lockWallet({ userId, walletType, asset }, tx);
+
+    if (!wallet) {
+      throw new Error(`Wallet not found for ${asset} (${walletType}).`);
+    }
+
+    const normalized = roundAmount(amount);
+    const normalizedDecimal = toDecimal(normalized);
+    const lockedDecimal = toDecimal(wallet.lockedBalance);
+
+    if (lockedDecimal.lessThan(normalizedDecimal)) {
+      throw new Error(`Insufficient locked ${asset} balance for settlement.`);
+    }
+
+    const updated = await balancesRepository.updateWalletBalances(
+      {
+        walletId: wallet.id,
+        totalBalance: toDecimal(wallet.totalBalance).minus(normalizedDecimal).toString(),
+        availableBalance: toDecimal(wallet.availableBalance).toString(),
+        lockedBalance: lockedDecimal.minus(normalizedDecimal).toString(),
+      },
+      tx,
+    );
+
+    await createLedger(
+      {
+        userId,
+        wallet: updated,
+        direction: "debit",
+        amount: normalized,
+        referenceType,
+        referenceId,
+        description,
+        idempotencyKey,
+      },
+      tx,
+    );
+
+    return mapWallet(updated);
+  });
+};
+
 export const releaseLockedBalance = async ({ userId, walletType, asset, amount, referenceType, referenceId, description, idempotencyKey }, db) => {
   return runAtomic(db, async (tx) => {
     const wallet = await balancesRepository.lockWallet({ userId, walletType, asset }, tx);
@@ -207,13 +272,16 @@ export const releaseLockedBalance = async ({ userId, walletType, asset, amount, 
     }
 
     const normalized = roundAmount(amount);
+    const normalizedDecimal = toDecimal(normalized);
+    const lockedDecimal = toDecimal(wallet.lockedBalance);
+    const releaseAmount = normalizedDecimal.greaterThan(lockedDecimal) ? lockedDecimal : normalizedDecimal;
 
     const updated = await balancesRepository.updateWalletBalances(
       {
         walletId: wallet.id,
-        totalBalance: Number(wallet.totalBalance),
-        availableBalance: roundAmount(Number(wallet.availableBalance) + normalized),
-        lockedBalance: Math.max(0, roundAmount(Number(wallet.lockedBalance) - normalized)),
+        totalBalance: toDecimal(wallet.totalBalance).toString(),
+        availableBalance: toDecimal(wallet.availableBalance).plus(releaseAmount).toString(),
+        lockedBalance: lockedDecimal.minus(releaseAmount).toString(),
       },
       tx,
     );
@@ -223,7 +291,7 @@ export const releaseLockedBalance = async ({ userId, walletType, asset, amount, 
         userId,
         wallet: updated,
         direction: "credit",
-        amount: normalized,
+        amount: releaseAmount.toString(),
         referenceType,
         referenceId,
         description,

@@ -50,7 +50,7 @@ export const kycCasesRepository = {
       `SELECT c.*, u.email AS user_email, u.full_name AS user_full_name
        FROM kyc_cases c
        JOIN users u ON u.id = c.user_id
-       WHERE c.status IN ('pending', 'under_review')
+       WHERE c.status IN ('pending', 'documents_submitted', 'under_review', 'needs_resubmission', 'approved', 'rejected')
        ORDER BY c.updated_at DESC`,
     );
 
@@ -74,10 +74,55 @@ export const kycCasesRepository = {
        SET status = $2,
            reviewer_id = $3,
            reviewer_note = $4,
+           reviewed_at = CASE WHEN $3 IS NOT NULL THEN NOW() ELSE reviewed_at END,
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
       [caseId, status, reviewerId || null, reviewerNote || null],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
+  async findLatestActiveByUser(userId, db = { query }) {
+    const { rows } = await db.query(
+      `SELECT *
+       FROM kyc_cases
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
+  async updateStatus(
+    {
+      caseId,
+      status,
+      reviewerId = null,
+      reviewerNote = null,
+      rejectionReason = null,
+      metadataPatch = null,
+    },
+    db = { query },
+  ) {
+    const { rows } = await db.query(
+      `UPDATE kyc_cases
+       SET status = $2,
+           reviewer_id = COALESCE($3, reviewer_id),
+           reviewer_note = COALESCE($4, reviewer_note),
+           rejection_reason = COALESCE($5, rejection_reason),
+           reviewed_at = CASE WHEN $3 IS NOT NULL THEN NOW() ELSE reviewed_at END,
+           metadata = CASE
+             WHEN $6::jsonb IS NULL THEN metadata
+             ELSE metadata || $6::jsonb
+           END,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [caseId, status, reviewerId, reviewerNote, rejectionReason, metadataPatch ? asJson(metadataPatch) : null],
     );
 
     return toCamelRows(rows)[0] || null;

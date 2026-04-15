@@ -1,17 +1,20 @@
 import { v4 as uuid } from "uuid";
-import { withTransaction } from "../db/transaction.js";
 import { auditLogsRepository } from "../repositories/auditLogsRepository.js";
-import { authFactorsRepository } from "../repositories/authFactorsRepository.js";
 import { sessionsRepository } from "../repositories/sessionsRepository.js";
 import { usersRepository } from "../repositories/usersRepository.js";
-import { authenticateUser, createUser, sanitizeUser } from "../services/userService.js";
+import { authenticateUser, createUser, findOrCreateFirebaseUser, sanitizeUser } from "../services/userService.js";
+import { verifyFirebaseIdToken } from "../services/firebaseAdminService.js";
+import { sendContactVerificationOtp, verifyContactOtp } from "../services/kycService.js";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/tokens.js";
 
 const refreshTokenExpiry = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-const generateVerificationCode = () => `${Math.floor(100000 + Math.random() * 900000)}`;
 const knownAuthMessages = new Set([
   "An account with this email already exists.",
   "Terms and privacy consent are required to create an account.",
+  "Firebase account is missing a verified email address.",
+  "Firebase account is missing a valid UID.",
+  "Firebase identity email does not match the linked account.",
+  "This email is already linked to another Firebase account.",
   "Invalid credentials.",
   "Your account is restricted. Please contact support.",
   "This account is frozen pending compliance review.",
@@ -24,7 +27,15 @@ const isInfrastructureIssue = (error) => {
   }
 
   const code = typeof error.code === "string" ? error.code : "";
-  const networkCodes = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "CONFIG_SECRET_INVALID"]);
+  const networkCodes = new Set([
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "EPIPE",
+    "CONFIG_SECRET_INVALID",
+    "CONFIG_FIREBASE_ADMIN_MISSING",
+    "CONFIG_FIREBASE_ADMIN_INVALID",
+  ]);
   const dbCodes = /^(08|53|57|3D|XX)/;
   const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
 
@@ -39,6 +50,46 @@ const isInfrastructureIssue = (error) => {
     message.includes("jwt_refresh_secret") ||
     message.includes("secret")
   );
+};
+
+const isFirebaseTokenIssue = (error) => {
+  const code = typeof error?.code === "string" ? error.code : "";
+  return code.startsWith("auth/") || code === "auth/argument-error";
+};
+
+const resolveFirebaseProvider = (decoded) => {
+  const claimedProvider =
+    typeof decoded?.firebase?.sign_in_provider === "string"
+      ? decoded.firebase.sign_in_provider.trim().toLowerCase()
+      : "";
+
+  if (!claimedProvider) {
+    return "firebase";
+  }
+
+  if (claimedProvider === "google.com") {
+    return "google";
+  }
+
+  if (claimedProvider === "password") {
+    return "email";
+  }
+
+  return claimedProvider;
+};
+
+const resolveVerifiedFirebaseIdentity = (decoded) => {
+  const firebaseUid = typeof decoded?.uid === "string" ? decoded.uid.trim() : "";
+  const firebaseEmail = typeof decoded?.email === "string" ? decoded.email.trim().toLowerCase() : "";
+  const firebaseEmailVerified = decoded?.email_verified === true;
+  const firebaseProvider = resolveFirebaseProvider(decoded);
+
+  return {
+    firebaseUid,
+    firebaseEmail,
+    firebaseEmailVerified,
+    firebaseProvider,
+  };
 };
 
 const knownMessageOrFallback = (error, fallback) => {
@@ -73,33 +124,14 @@ export const register = async (req, res) => {
   try {
     const user = await createUser(req.validated.body);
 
-    const emailCode = generateVerificationCode();
-    const phoneCode = generateVerificationCode();
-
-    const [emailChallenge, phoneChallenge] = await Promise.all([
-      authFactorsRepository.createVerificationChallenge({
-        userId: user.id,
-        channel: "email",
-        destination: user.email,
-        code: emailCode,
-      }),
-      authFactorsRepository.createVerificationChallenge({
-        userId: user.id,
-        channel: "phone",
-        destination: user.phone,
-        code: phoneCode,
-      }),
-    ]);
-
     await auditLogsRepository.create({
-      action: "verification_challenges_created",
+      action: "verification_channels_ready",
       actorId: user.id,
       actorRole: user.role,
       resourceType: "user",
       resourceId: user.id,
       metadata: {
-        emailChallengeId: emailChallenge.id,
-        phoneChallengeId: phoneChallenge.id,
+        channels: ["email", "phone"],
       },
     });
 
@@ -181,92 +213,33 @@ export const refresh = async (req, res) => {
 };
 
 export const sendVerification = async (req, res) => {
-  const user = req.user;
-  const { channel } = req.validated.body;
-  const code = generateVerificationCode();
+  try {
+    const user = req.user;
+    const { channel } = req.validated.body;
+    const result = await sendContactVerificationOtp({ user, channel });
 
-  const challenge = await authFactorsRepository.createVerificationChallenge({
-    userId: user.id,
-    channel,
-    destination: channel === "email" ? user.email : user.phone,
-    code,
-  });
-
-  await auditLogsRepository.create({
-    action: "verification_code_sent",
-    actorId: user.id,
-    actorRole: user.role,
-    resourceType: "verification",
-    resourceId: challenge.id,
-    metadata: {
-      channel,
-      destination: challenge.destination,
-    },
-  });
-
-  return res.json({
-    message: `${channel === "email" ? "Email" : "Phone"} verification code sent.`,
-    challengeId: challenge.id,
-    expiresAt: challenge.expiresAt,
-    testCode: code,
-  });
+    return res.json({
+      message: `${channel === "email" ? "Email" : "Phone"} verification code sent.`,
+      ...result,
+    });
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "Unable to send verification code." });
+  }
 };
 
 export const verifyContact = async (req, res) => {
-  const user = req.user;
-  const { channel, code } = req.validated.body;
+  try {
+    const user = req.user;
+    const { channel, code } = req.validated.body;
+    const updated = await verifyContactOtp({ user, channel, code });
 
-  const challenge = await authFactorsRepository.findLatestActiveChallenge({
-    userId: user.id,
-    channel,
-  });
-
-  if (!challenge) {
-    return res.status(400).json({ message: "No verification challenge found. Please request a new code." });
+    return res.json({
+      message: `${channel === "email" ? "Email" : "Phone"} verification complete.`,
+      user: sanitizeUser(updated || (await usersRepository.findById(user.id))),
+    });
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "Unable to verify contact code." });
   }
-
-  if (challenge.expiresAt && new Date(challenge.expiresAt).getTime() < Date.now()) {
-    return res.status(400).json({ message: "Verification code expired. Please request a new code." });
-  }
-
-  await authFactorsRepository.incrementAttempts(challenge.id);
-
-  const matches = await authFactorsRepository.verifyChallengeCode(challenge, code);
-
-  if (!matches) {
-    return res.status(400).json({ message: "Verification code is incorrect." });
-  }
-
-  await withTransaction(async (db) => {
-    await authFactorsRepository.consumeChallenge(challenge.id, db);
-
-    await usersRepository.updateById(
-      user.id,
-      channel === "email" ? { emailVerified: true } : { phoneVerified: true },
-      db,
-    );
-
-    await auditLogsRepository.create(
-      {
-        action: "contact_verified",
-        actorId: user.id,
-        actorRole: user.role,
-        resourceType: "user",
-        resourceId: user.id,
-        metadata: {
-          channel,
-        },
-      },
-      db,
-    );
-  });
-
-  const updated = await usersRepository.findById(user.id);
-
-  return res.json({
-    message: `${channel === "email" ? "Email" : "Phone"} verification complete.`,
-    user: sanitizeUser(updated),
-  });
 };
 
 export const setupTwoFactor = async (req, res) => {
@@ -301,6 +274,63 @@ export const setupTwoFactor = async (req, res) => {
     user: sanitizeUser(updated),
     secret: updated.twoFactorSecret,
   });
+};
+
+export const firebaseSession = async (req, res) => {
+  try {
+    const {
+      idToken,
+      countryCode,
+      termsAccepted = false,
+      privacyAccepted = false,
+    } = req.validated.body;
+
+    const decoded = await verifyFirebaseIdToken(idToken);
+    const { firebaseUid, firebaseEmail, firebaseEmailVerified, firebaseProvider } =
+      resolveVerifiedFirebaseIdentity(decoded);
+
+    if (!firebaseUid || !firebaseEmail) {
+      return res.status(401).json({ message: "Firebase session is invalid or missing required claims." });
+    }
+
+    if (!firebaseEmailVerified) {
+      return res.status(403).json({
+        message: "Email verification is required before continuing. Please verify your email and try again.",
+      });
+    }
+
+    const { user } = await findOrCreateFirebaseUser({
+      email: firebaseEmail,
+      fullName: decoded.name,
+      countryCode,
+      emailVerified: firebaseEmailVerified,
+      termsAccepted,
+      privacyAccepted,
+      provider: firebaseProvider,
+      firebaseUid,
+    });
+
+    if (user.status !== "active" || user.accountRestrictions?.frozen) {
+      return res.status(403).json({
+        message: "Your account is restricted pending compliance review.",
+      });
+    }
+
+    return respondWithSession(res, user, req);
+  } catch (error) {
+    if (isInfrastructureIssue(error)) {
+      console.error("Firebase session exchange failed due infrastructure/config issue", error);
+      return res.status(503).json({ message: "Authentication is temporarily unavailable. Please try again shortly." });
+    }
+
+    if (isFirebaseTokenIssue(error)) {
+      return res.status(401).json({ message: "Firebase session is invalid or expired. Please sign in again." });
+    }
+
+    return res.status(400).json({
+      message: knownMessageOrFallback(error, "Unable to sign in with Firebase right now."),
+    });
+  }
 };
 
 export const getSessionHistory = async (req, res) => {

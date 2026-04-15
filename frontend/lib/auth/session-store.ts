@@ -11,13 +11,16 @@ export type AuthUser = {
   role: string;
   status: string;
   email: string;
+  authProvider?: string;
   phone?: string;
   fullName: string;
   countryCode?: string;
   antiPhishingCode?: string;
   twoFactorEnabled?: boolean;
   emailVerified?: boolean;
+  emailVerifiedAt?: string;
   phoneVerified?: boolean;
+  phoneVerifiedAt?: string;
   kycStatus?: string;
   kycTier?: string;
   sanctionsStatus?: string;

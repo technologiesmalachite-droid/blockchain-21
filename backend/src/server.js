@@ -18,6 +18,7 @@ import walletRoutes from "./routes/walletRoutes.js";
 import { secureErrorHandler } from "./middleware/security.js";
 
 const app = express();
+app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 const allowedOrigins = new Set(env.clientUrls);
@@ -50,7 +51,6 @@ const isAllowedOrigin = (origin) => {
 };
 
 app.use(helmet());
-app.set("trust proxy", 1);
 app.use(attachRequestId);
 app.use(requestLogger);
 app.use(
@@ -68,6 +68,17 @@ app.use(
 );
 app.use(globalApiLimiter);
 app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true }));
+app.use((error, _req, res, next) => {
+  if (error?.type === "entity.parse.failed") {
+    return res.status(400).json({
+      message: "Invalid JSON body.",
+      code: "invalid_json",
+    });
+  }
+
+  return next(error);
+});
 app.use(cookieParser());
 
 app.get("/api/health", async (_req, res) => {
@@ -105,6 +116,7 @@ app.get("/api/health", async (_req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/markets", marketRoutes);
+app.use("/api/market", marketRoutes);
 app.use("/api/trade", tradeRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/kyc", kycRoutes);

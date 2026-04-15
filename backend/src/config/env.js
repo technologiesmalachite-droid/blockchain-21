@@ -14,20 +14,74 @@ const parseOrigins = (value) =>
     .map((entry) => entry.trim())
     .filter(Boolean);
 
+const mergeUnique = (...groups) => [...new Set(groups.flat().filter(Boolean))];
+
 const parsePatterns = (value) =>
   (value || "")
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
 
-const configuredClientUrls = parseOrigins(process.env.CLIENT_URLS);
-const fallbackClientUrls = parseOrigins(process.env.CLIENT_URL);
+const parseCsv = (value, fallback = []) => {
+  const values = (value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  return values.length ? values : fallback;
+};
+
+const parsePositiveNumber = (value, fallback) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+};
+
+const parseBoolean = (value, fallback = false) => {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+
+  if (normalized === "false") {
+    return false;
+  }
+
+  return fallback;
+};
+
+const parseNullablePositiveNumber = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const configuredClientUrls = mergeUnique(
+  parseOrigins(process.env.CLIENT_URLS),
+  parseOrigins(process.env.FRONTEND_URLS),
+);
+const fallbackClientUrls = mergeUnique(
+  parseOrigins(process.env.CLIENT_URL),
+  parseOrigins(process.env.FRONTEND_URL),
+);
 const configuredClientPatterns = parsePatterns(process.env.CLIENT_URL_PATTERNS);
 const nodeEnv = process.env.NODE_ENV || "development";
 const developmentClientUrls = ["http://localhost:3000", "http://localhost:3001"];
 const defaultProductionClientPatterns = ["https://*.vercel.app"];
-
-const dedupe = (values) => [...new Set(values)];
 
 const baseClientUrls = configuredClientUrls.length
   ? configuredClientUrls
@@ -37,7 +91,7 @@ const baseClientUrls = configuredClientUrls.length
       ? developmentClientUrls
       : [];
 
-const resolvedClientUrls = nodeEnv === "development" ? dedupe([...baseClientUrls, ...developmentClientUrls]) : baseClientUrls;
+const resolvedClientUrls = nodeEnv === "development" ? mergeUnique(baseClientUrls, developmentClientUrls) : baseClientUrls;
 const resolvedClientPatterns = configuredClientPatterns.length
   ? configuredClientPatterns
   : nodeEnv === "production"
@@ -48,7 +102,17 @@ const jwtSecret = process.env.JWT_SECRET || "replace_with_secure_jwt_secret";
 const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET || "replace_with_secure_refresh_secret";
 const encryptionKey = process.env.ENCRYPTION_KEY || "replace_with_32_byte_encryption_key";
 const databaseUrl = process.env.DATABASE_URL || "";
+const dbSslModeRaw = (process.env.DB_SSL_MODE || (nodeEnv === "production" ? "require" : "disable")).toLowerCase();
+const dbSslMode = ["require", "disable"].includes(dbSslModeRaw) ? dbSslModeRaw : (nodeEnv === "production" ? "require" : "disable");
+const dbSslRejectUnauthorized = parseBoolean(process.env.DB_SSL_REJECT_UNAUTHORIZED, false);
 const configurationWarnings = [];
+const kycAllowedGovernmentIds = parseCsv(process.env.KYC_ALLOWED_GOV_ID_TYPES, ["passport", "driving_license", "voter_id"]);
+const kycAllowedMimeTypes = parseCsv(process.env.KYC_ALLOWED_MIME_TYPES, [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+]);
 
 const assertProductionSecret = (name, value, minLength) => {
   if (nodeEnv !== "production") {
@@ -84,6 +148,8 @@ export const env = {
   jwtRefreshSecret,
   encryptionKey,
   databaseUrl,
+  dbSslMode,
+  dbSslRejectUnauthorized,
   redisUrl: process.env.REDIS_URL || "",
   objectStorageBucket: process.env.OBJECT_STORAGE_BUCKET || "",
   identityProviderUrl: process.env.IDENTITY_PROVIDER_URL || "",
@@ -97,5 +163,27 @@ export const env = {
   authRateLimitMax: Number(process.env.AUTH_RATE_LIMIT_MAX || 20),
   outboxPollIntervalMs: Number(process.env.OUTBOX_POLL_INTERVAL_MS || 1500),
   outboxBatchSize: Number(process.env.OUTBOX_BATCH_SIZE || 20),
+  kycOtpExpiryMinutes: parsePositiveNumber(process.env.KYC_OTP_EXPIRY_MINUTES, 10),
+  kycOtpCooldownSeconds: parsePositiveNumber(process.env.KYC_OTP_COOLDOWN_SECONDS, 60),
+  kycOtpMaxAttempts: parsePositiveNumber(process.env.KYC_OTP_MAX_ATTEMPTS, 5),
+  kycOtpMaxResends: parsePositiveNumber(process.env.KYC_OTP_MAX_RESENDS, 5),
+  kycOtpDebug: process.env.KYC_OTP_DEBUG === "true",
+  kycRetentionDays: parsePositiveNumber(process.env.KYC_RETENTION_DAYS, 365),
+  kycPrivacyNoticeVersion: process.env.KYC_PRIVACY_NOTICE_VERSION || "v1",
+  kycStorageBackend: process.env.KYC_STORAGE_BACKEND || "local",
+  kycUploadDir: process.env.KYC_UPLOAD_DIR || "storage/kyc",
+  kycAllowedGovernmentIds,
+  kycAllowedMimeTypes,
+  kycDocumentMaxSizeBytes: parsePositiveNumber(process.env.KYC_DOC_MAX_SIZE_BYTES, 10 * 1024 * 1024),
+  kycMalwareScanCommand: process.env.KYC_MALWARE_SCAN_COMMAND || "",
+  tradeMakerFeeBps: parsePositiveNumber(process.env.TRADE_MAKER_FEE_BPS, 8),
+  tradeTakerFeeBps: parsePositiveNumber(process.env.TRADE_TAKER_FEE_BPS, 10),
+  tradeMinOrderNotional: parsePositiveNumber(process.env.TRADE_MIN_ORDER_NOTIONAL, 5),
+  tradeMaxOrderNotional: parseNullablePositiveNumber(process.env.TRADE_MAX_ORDER_NOTIONAL),
+  tradeMaxOrderQty: parseNullablePositiveNumber(process.env.TRADE_MAX_ORDER_QTY),
+  tradeOrderRateLimitWindowMs: parsePositiveNumber(process.env.TRADE_ORDER_RATE_LIMIT_WINDOW, 60000),
+  tradeOrderRateLimitMax: parsePositiveNumber(process.env.TRADE_ORDER_RATE_LIMIT_MAX, 30),
+  tradeCancelRateLimitWindowMs: parsePositiveNumber(process.env.TRADE_CANCEL_RATE_LIMIT_WINDOW, 60000),
+  tradeCancelRateLimitMax: parsePositiveNumber(process.env.TRADE_CANCEL_RATE_LIMIT_MAX, 60),
   configurationWarnings,
 };

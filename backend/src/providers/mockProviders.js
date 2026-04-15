@@ -1,9 +1,13 @@
 import { v4 as uuid } from "uuid";
 import {
   CustodyProvider,
+  DocumentVerificationProvider,
   DigiLockerProvider,
+  EmailOtpProvider,
   IdentityVerificationProvider,
+  PanVerificationProvider,
   PaymentRailProvider,
+  SmsOtpProvider,
   SanctionsScreeningProvider,
 } from "./contracts.js";
 
@@ -129,6 +133,61 @@ export class MockPaymentRailProvider extends PaymentRailProvider {
       status: "accepted",
       receivedAt: nowIso(),
       eventType: payload.eventType || "payment.updated",
+    };
+  }
+}
+
+export class MockEmailOtpProvider extends EmailOtpProvider {
+  async sendVerification(payload) {
+    return {
+      provider: "mock_email_otp",
+      messageId: `mail_${uuid()}`,
+      destinationMasked: payload.destination?.replace(/(.{2}).+(@.*)/, "$1***$2") || "hidden",
+      sentAt: nowIso(),
+    };
+  }
+}
+
+export class MockSmsOtpProvider extends SmsOtpProvider {
+  async sendVerification(payload) {
+    const destination = payload.destination || "";
+    const masked = destination.length > 4 ? `${destination.slice(0, 2)}******${destination.slice(-2)}` : "hidden";
+
+    return {
+      provider: "mock_sms_otp",
+      messageId: `sms_${uuid()}`,
+      destinationMasked: masked,
+      sentAt: nowIso(),
+    };
+  }
+}
+
+export class MockPanVerificationProvider extends PanVerificationProvider {
+  async verifyPan(payload) {
+    const normalized = (payload.panNumber || "").toUpperCase();
+    const valid = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(normalized);
+
+    return {
+      provider: "mock_pan_provider",
+      referenceId: `pan_${uuid()}`,
+      status: valid ? "verified" : "invalid",
+      requiresManualReview: !valid,
+      checkedAt: nowIso(),
+    };
+  }
+}
+
+export class MockDocumentVerificationProvider extends DocumentVerificationProvider {
+  async verifyDocuments(payload) {
+    const documentCount = Number(payload.documentCount || 0);
+    const status = documentCount >= 2 ? "under_review" : "needs_resubmission";
+
+    return {
+      provider: "mock_document_provider",
+      referenceId: `doc_${uuid()}`,
+      status,
+      requiresManualReview: true,
+      checkedAt: nowIso(),
     };
   }
 }

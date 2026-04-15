@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, Suspense, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ContentSection, PageHero } from "@/components/PageShell";
 import { Button } from "@/components/ui/Button";
@@ -27,7 +27,7 @@ export default function SignupPage() {
 
 function SignupPageContent() {
   const { submitToast } = useDemo();
-  const { signUp } = useAuth();
+  const { signUp, signUpWithGoogle, status } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [fullName, setFullName] = useState("");
@@ -35,17 +35,27 @@ function SignupPageContent() {
   const [phone, setPhone] = useState("");
   const [countryCode, setCountryCode] = useState("US");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState("");
 
   const rawNextPath = searchParams.get("next");
   const nextPath = rawNextPath && rawNextPath.startsWith("/") ? rawNextPath : "/kyc";
 
+  useEffect(() => {
+    if (status !== "authenticated") {
+      return;
+    }
+
+    router.replace(nextPath);
+  }, [nextPath, router, status]);
+
   const canSubmit = useMemo(
-    () => Boolean(fullName && email && phone && password && termsAccepted && privacyAccepted),
-    [email, fullName, password, phone, privacyAccepted, termsAccepted],
+    () => Boolean(fullName && email && phone && password && confirmPassword && termsAccepted && privacyAccepted),
+    [confirmPassword, email, fullName, password, phone, privacyAccepted, termsAccepted],
   );
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -55,6 +65,14 @@ function SignupPageContent() {
     setError("");
 
     try {
+      if (password.length < 10) {
+        throw new Error("Password must be at least 10 characters.");
+      }
+
+      if (password !== confirmPassword) {
+        throw new Error("Password and confirmation do not match.");
+      }
+
       await signUp({
         fullName,
         email,
@@ -64,12 +82,31 @@ function SignupPageContent() {
         termsAccepted,
         privacyAccepted,
       });
-      submitToast("Account created", "Your account is active. Complete KYC to unlock full trading and withdrawal access.");
+      submitToast("Account created", "Check your email for a verification link, then complete KYC to unlock full trading and withdrawal access.");
       router.replace(nextPath);
     } catch (requestError) {
       setError(getFriendlyAuthError(requestError));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onContinueWithGoogle = async () => {
+    setGoogleBusy(true);
+    setError("");
+
+    try {
+      await signUpWithGoogle({
+        countryCode,
+        termsAccepted,
+        privacyAccepted,
+      });
+      submitToast("Google account connected", "Account authenticated successfully.");
+      router.replace(nextPath);
+    } catch (requestError) {
+      setError(getFriendlyAuthError(requestError));
+    } finally {
+      setGoogleBusy(false);
     }
   };
 
@@ -129,6 +166,15 @@ function SignupPageContent() {
                 minLength={10}
                 className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
               />
+              <input
+                placeholder="Confirm password"
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                required
+                minLength={10}
+                className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
+              />
               <label className="flex items-start gap-3 text-sm text-muted">
                 <input
                   type="checkbox"
@@ -150,6 +196,9 @@ function SignupPageContent() {
               {error ? <p className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p> : null}
               <Button className="w-full" type="submit" disabled={busy || !canSubmit}>
                 {busy ? "Creating account..." : "Create account"}
+              </Button>
+              <Button className="w-full" type="button" variant="secondary" disabled={googleBusy || busy} onClick={onContinueWithGoogle}>
+                {googleBusy ? "Connecting..." : "Continue with Google"}
               </Button>
               <p className="text-sm text-muted">
                 Already registered?{" "}

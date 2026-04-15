@@ -75,7 +75,12 @@ export const requireTwoFactorForWithdrawal = async (req, res, next) => {
 };
 
 export const secureErrorHandler = (error, req, res, _next) => {
-  const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
+  const statusCandidate = Number.isInteger(error?.statusCode)
+    ? error.statusCode
+    : Number.isInteger(error?.status)
+      ? error.status
+      : 500;
+  const status = statusCandidate >= 400 && statusCandidate <= 599 ? statusCandidate : 500;
   const candidateMessage = typeof error?.message === "string" ? error.message.trim() : "";
   const message = status >= 500 ? "Unexpected server error. Please try again." : candidateMessage || "Request could not be completed.";
 

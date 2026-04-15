@@ -1,9 +1,29 @@
 "use client";
 
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import type { User as FirebaseUser } from "firebase/auth";
 import { AuthRequiredModal } from "@/components/auth/AuthRequiredModal";
-import { getProfileRequest, loginRequest, logoutRequest, registerRequest, type LoginPayload, type RegisterPayload } from "@/lib/api/auth";
+import {
+  firebaseSessionRequest,
+  getProfileRequest,
+  loginRequest,
+  logoutRequest,
+  registerRequest,
+  type LoginPayload,
+  type RegisterPayload,
+} from "@/lib/api/auth";
 import { ApiRequestError } from "@/lib/api/client";
+import {
+  deleteCurrentUserSafe,
+  getFirebaseErrorCode,
+  getFriendlyFirebaseAuthError,
+  observeAuthState,
+  resendCurrentUserVerificationEmail,
+  signInWithEmail,
+  signInWithGoogle,
+  signOutUser,
+  signUpWithEmail,
+} from "@/lib/firebase-auth";
 import {
   AUTH_REQUIRED_EVENT,
   SESSION_CHANGED_EVENT,
@@ -17,24 +37,72 @@ import {
 
 type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
+type GoogleAuthOptions = {
+  countryCode?: string;
+  termsAccepted?: boolean;
+  privacyAccepted?: boolean;
+};
+
 type AuthContextType = {
   user: AuthUser | null;
   status: AuthStatus;
   isAuthenticated: boolean;
   signIn: (payload: LoginPayload) => Promise<void>;
   signUp: (payload: RegisterPayload) => Promise<void>;
+  signInWithGoogle: (options?: GoogleAuthOptions) => Promise<void>;
+  signUpWithGoogle: (options?: GoogleAuthOptions) => Promise<void>;
+  resendEmailVerification: () => Promise<void>;
   signOut: () => Promise<void>;
   openAuthModal: (message?: string) => void;
   closeAuthModal: () => void;
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
+const GOOGLE_INTENT_STORAGE_KEY = "malachitex.firebase.google.intent.v1";
+const EMAIL_VERIFICATION_REQUIRED_CODE = "auth/email-not-verified";
 
 const isAuthError = (error: unknown) => error instanceof ApiRequestError && (error.status === 401 || error.status === 403);
+
+const saveGoogleIntent = (options?: GoogleAuthOptions) => {
+  if (typeof window === "undefined" || !options) {
+    return;
+  }
+
+  window.sessionStorage.setItem(GOOGLE_INTENT_STORAGE_KEY, JSON.stringify(options));
+};
+
+const readGoogleIntent = (): GoogleAuthOptions | undefined => {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  const raw = window.sessionStorage.getItem(GOOGLE_INTENT_STORAGE_KEY);
+  if (!raw) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(raw) as GoogleAuthOptions;
+  } catch {
+    return undefined;
+  }
+};
+
+const clearGoogleIntent = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.removeItem(GOOGLE_INTENT_STORAGE_KEY);
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [firebaseReady, setFirebaseReady] = useState(false);
+  const [syncingFirebaseSession, setSyncingFirebaseSession] = useState(false);
+  const [firebaseSessionSyncUid, setFirebaseSessionSyncUid] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ open: boolean; message: string }>({
     open: false,
     message: "Please sign in to continue.",
@@ -45,6 +113,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(existing);
     setStatus(existing ? "authenticated" : "unauthenticated");
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = observeAuthState((nextFirebaseUser) => {
+      setFirebaseUser(nextFirebaseUser);
+      setFirebaseReady(true);
+
+      if (!nextFirebaseUser) {
+        setFirebaseSessionSyncUid(null);
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseReady || firebaseUser || !session?.tokens?.refreshToken) {
+      return;
+    }
+
+    const provider = (session.user?.authProvider || "local").toLowerCase();
+    if (provider === "local") {
+      return;
+    }
+
+    logoutRequest(session.tokens.refreshToken).catch(() => {});
+    clearSession();
+  }, [firebaseReady, firebaseUser, session?.tokens?.refreshToken, session?.user?.authProvider]);
 
   useEffect(() => {
     const onSessionChanged = (event: Event) => {
@@ -96,7 +191,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (isAuthError(error)) {
           clearSession();
-          return;
         }
       });
 
@@ -105,16 +199,233 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [session?.tokens.accessToken]);
 
+  useEffect(() => {
+    if (!firebaseReady || !firebaseUser || session?.tokens.accessToken || syncingFirebaseSession) {
+      return;
+    }
+
+    if (firebaseSessionSyncUid === firebaseUser.uid) {
+      return;
+    }
+
+    let active = true;
+    setSyncingFirebaseSession(true);
+    setFirebaseSessionSyncUid(firebaseUser.uid);
+
+    const intent = readGoogleIntent();
+
+    firebaseUser
+      .getIdToken()
+      .then((idToken) =>
+        firebaseSessionRequest({
+          idToken,
+          countryCode: intent?.countryCode,
+          termsAccepted: intent?.termsAccepted,
+          privacyAccepted: intent?.privacyAccepted,
+        }),
+      )
+      .then((backendSession) => {
+        if (!active) {
+          return;
+        }
+
+        saveSession(backendSession);
+        clearGoogleIntent();
+        setAuthModal((current) => ({ ...current, open: false }));
+      })
+      .catch(async (error) => {
+        if (!active) {
+          return;
+        }
+
+        const friendlyFirebaseError = getFriendlyFirebaseAuthError(error);
+        if (friendlyFirebaseError) {
+          setAuthModal({
+            open: true,
+            message: friendlyFirebaseError,
+          });
+          return;
+        }
+
+        if (error instanceof ApiRequestError && error.status === 400) {
+          setAuthModal({
+            open: true,
+            message: "Google account is authenticated but backend profile setup is incomplete. Please complete signup consent and try again.",
+          });
+          await signOutUser().catch(() => {});
+          return;
+        }
+
+        if (isAuthError(error)) {
+          clearSession();
+
+          if (firebaseUser?.emailVerified === false) {
+            setAuthModal({
+              open: true,
+              message: "Verify your email before continuing. You can resend verification from the sign-in page.",
+            });
+            return;
+          }
+
+          await signOutUser().catch(() => {});
+          return;
+        }
+
+        setAuthModal({
+          open: true,
+          message: "Unable to finalize session with the server. Please try again.",
+        });
+      })
+      .finally(() => {
+        if (!active) {
+          return;
+        }
+        setSyncingFirebaseSession(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [firebaseReady, firebaseSessionSyncUid, firebaseUser, session?.tokens.accessToken, syncingFirebaseSession]);
+
   const signIn = async (payload: LoginPayload) => {
-    const result = await loginRequest(payload);
-    saveSession(result);
-    setAuthModal((current) => ({ ...current, open: false }));
+    let firebaseSignedIn = false;
+
+    try {
+      try {
+        const firebaseCredential = await signInWithEmail(payload.email, payload.password);
+        firebaseSignedIn = true;
+
+        if (!firebaseCredential.user.emailVerified) {
+          await resendCurrentUserVerificationEmail().catch(() => false);
+          const verificationError = new Error(
+            "Please verify your email before signing in. A verification email has been sent.",
+          ) as Error & { code?: string };
+          verificationError.code = EMAIL_VERIFICATION_REQUIRED_CODE;
+          throw verificationError;
+        }
+
+        const idToken = await firebaseCredential.user.getIdToken();
+        const backendSession = await firebaseSessionRequest({ idToken });
+        saveSession(backendSession);
+        clearGoogleIntent();
+        setAuthModal((current) => ({ ...current, open: false }));
+        return;
+      } catch (firebaseError) {
+        if (firebaseError instanceof ApiRequestError) {
+          throw firebaseError;
+        }
+
+        const friendlyFirebaseError = getFriendlyFirebaseAuthError(firebaseError);
+        const firebaseCode = getFirebaseErrorCode(firebaseError);
+
+        if (firebaseCode === EMAIL_VERIFICATION_REQUIRED_CODE) {
+          throw firebaseError;
+        }
+
+        const canFallbackToLegacyLogin =
+          firebaseCode === "auth/user-not-found" || firebaseCode === "auth/configuration-not-found";
+
+        if (!canFallbackToLegacyLogin) {
+          throw new Error(friendlyFirebaseError || "Unable to authenticate with Firebase.");
+        }
+
+        if (
+          firebaseCode === "auth/configuration-not-found" &&
+          !friendlyFirebaseError
+        ) {
+          throw new Error("Authentication is not configured yet. Please contact support.");
+        }
+      }
+
+      const result = await loginRequest(payload);
+      saveSession(result);
+      clearGoogleIntent();
+      setAuthModal((current) => ({ ...current, open: false }));
+    } catch (error) {
+      const firebaseCode = getFirebaseErrorCode(error);
+      const preserveFirebaseSession = firebaseCode === EMAIL_VERIFICATION_REQUIRED_CODE;
+
+      if (firebaseSignedIn && !preserveFirebaseSession) {
+        await signOutUser().catch(() => {});
+      }
+
+      throw error;
+    }
   };
 
   const signUp = async (payload: RegisterPayload) => {
-    const result = await registerRequest(payload);
-    saveSession(result);
-    setAuthModal((current) => ({ ...current, open: false }));
+    let firebaseUserCreated = false;
+
+    try {
+      try {
+        await signUpWithEmail(payload.email, payload.password, payload.fullName);
+        firebaseUserCreated = true;
+        await resendCurrentUserVerificationEmail().catch(() => false);
+      } catch (firebaseError) {
+        const firebaseCode = getFirebaseErrorCode(firebaseError);
+        if (firebaseCode !== "auth/configuration-not-found") {
+          throw firebaseError;
+        }
+      }
+
+      const result = await registerRequest(payload);
+      saveSession(result);
+      clearGoogleIntent();
+      setAuthModal((current) => ({ ...current, open: false }));
+    } catch (error) {
+      if (firebaseUserCreated) {
+        await deleteCurrentUserSafe();
+        await signOutUser().catch(() => {});
+      }
+
+      throw error;
+    }
+  };
+
+  const signInWithGoogleAccount = async (options?: GoogleAuthOptions) => {
+    saveGoogleIntent(options);
+
+    const googleResult = await signInWithGoogle();
+
+    if (googleResult.redirected) {
+      return;
+    }
+
+    const idToken = await googleResult.credential.user.getIdToken();
+
+    try {
+      const backendSession = await firebaseSessionRequest({
+        idToken,
+        countryCode: options?.countryCode,
+        termsAccepted: options?.termsAccepted,
+        privacyAccepted: options?.privacyAccepted,
+      });
+
+      saveSession(backendSession);
+      clearGoogleIntent();
+      setAuthModal((current) => ({ ...current, open: false }));
+    } catch (error) {
+      await signOutUser().catch(() => {});
+      throw error;
+    }
+  };
+
+  const signInWithGoogleHandler = async (options?: GoogleAuthOptions) => signInWithGoogleAccount(options);
+
+  const signUpWithGoogleHandler = async (options?: GoogleAuthOptions) => {
+    if (!options?.termsAccepted || !options?.privacyAccepted) {
+      throw new Error("Terms and privacy consent are required before continuing with Google.");
+    }
+
+    return signInWithGoogleAccount(options);
+  };
+
+  const resendEmailVerification = async () => {
+    const sent = await resendCurrentUserVerificationEmail();
+    if (!sent) {
+      throw new Error("Email is already verified.");
+    }
   };
 
   const signOut = async () => {
@@ -128,6 +439,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    await signOutUser().catch(() => {});
+    clearGoogleIntent();
     clearSession();
   };
 
@@ -137,18 +450,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const closeAuthModal = () => setAuthModal((current) => ({ ...current, open: false }));
 
+  const resolvedStatus: AuthStatus =
+    status === "loading" || (firebaseReady && syncingFirebaseSession && !session?.tokens.accessToken)
+      ? "loading"
+      : status;
+
   const value = useMemo<AuthContextType>(
     () => ({
       user: session?.user ?? null,
-      status,
-      isAuthenticated: status === "authenticated",
+      status: resolvedStatus,
+      isAuthenticated: resolvedStatus === "authenticated",
       signIn,
       signUp,
+      signInWithGoogle: signInWithGoogleHandler,
+      signUpWithGoogle: signUpWithGoogleHandler,
+      resendEmailVerification,
       signOut,
       openAuthModal,
       closeAuthModal,
     }),
-    [session, status],
+    [resolvedStatus, session],
   );
 
   return (
@@ -170,6 +491,19 @@ export function useAuth() {
 }
 
 export const getFriendlyAuthError = (error: unknown) => {
+  const firebaseMessage = getFriendlyFirebaseAuthError(error);
+  if (firebaseMessage) {
+    return firebaseMessage;
+  }
+
+  if (error instanceof Error && !(error instanceof ApiRequestError)) {
+    if (error.message.includes("consent")) {
+      return "Please accept terms and privacy policy before continuing.";
+    }
+
+    return error.message || "We couldn't complete authentication right now. Please try again.";
+  }
+
   if (!(error instanceof ApiRequestError)) {
     return "We couldn't complete authentication right now. Please try again.";
   }
@@ -179,15 +513,23 @@ export const getFriendlyAuthError = (error: unknown) => {
   }
 
   if (error.status === 401) {
-    return "Invalid credentials or missing 2FA code. Please check your details and try again.";
+    return "Invalid credentials or expired authentication. Please sign in again.";
   }
 
   if (error.status === 403) {
     return "Your account is restricted for this action. Complete verification or contact support.";
   }
 
+  if (error.status === 409) {
+    return "This account already exists. Please sign in instead.";
+  }
+
   if (error.status === 429) {
     return "Too many authentication attempts. Please wait a few minutes before trying again.";
+  }
+
+  if (error.status === 400) {
+    return error.message || "Please review your details and try again.";
   }
 
   if (error.status === 503) {

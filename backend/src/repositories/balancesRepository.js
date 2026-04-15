@@ -1,7 +1,12 @@
 import { query } from "../db/pool.js";
 import { toCamelRows } from "./helpers.js";
+import { toDecimal, toDbNumeric } from "../utils/decimal.js";
 
-const round = (value, precision = 10) => Number(Number(value).toFixed(precision));
+const assertNonNegative = (label, value) => {
+  if (toDecimal(value).lessThan(0)) {
+    throw new Error(`${label} cannot be negative.`);
+  }
+};
 
 export const balancesRepository = {
   async lockWallet({ userId, walletType, asset }, db = { query }) {
@@ -16,6 +21,10 @@ export const balancesRepository = {
   },
 
   async updateWalletBalances({ walletId, totalBalance, availableBalance, lockedBalance }, db = { query }) {
+    assertNonNegative("total_balance", totalBalance);
+    assertNonNegative("available_balance", availableBalance);
+    assertNonNegative("locked_balance", lockedBalance);
+
     const { rows } = await db.query(
       `UPDATE wallets
        SET total_balance = $2,
@@ -24,7 +33,7 @@ export const balancesRepository = {
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
-      [walletId, round(totalBalance), round(availableBalance), round(lockedBalance)],
+      [walletId, toDbNumeric(totalBalance), toDbNumeric(availableBalance), toDbNumeric(lockedBalance)],
     );
 
     return toCamelRows(rows)[0] || null;

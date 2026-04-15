@@ -127,7 +127,7 @@ export function OpenPositionsPanel() {
             <span className={position.side === "buy" ? "text-emerald-400" : "text-rose-400"}>{position.side.toUpperCase()}</span>
             <span className="text-muted">{position.orderType}</span>
             <span className="text-muted">{formatNumber(position.quantity, 4)}</span>
-            <span className="text-muted">{formatNumber(position.price, 2)}</span>
+            <span className="text-muted">{position.price != null ? formatNumber(position.price, 2) : "MKT"}</span>
             <span className="text-muted">{position.status}</span>
           </div>
         ))}

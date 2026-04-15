@@ -1,5 +1,6 @@
 import { getMarketBySymbol, listMarkets } from "../services/marketService.js";
 import { getBinanceMarketsSnapshot } from "../services/binanceMarketService.js";
+import { getOrderBook } from "../services/tradingEngine.js";
 
 export const getMarkets = async (_req, res) => {
   const items = await listMarkets();
@@ -28,5 +29,21 @@ export const getBinanceMarkets = async (_req, res) => {
       items: [],
       updatedAt: new Date().toISOString(),
     });
+  }
+};
+
+export const getSpotOrderBook = async (req, res) => {
+  try {
+    const symbol = String(req.query.symbol || "").toUpperCase().trim();
+    const depth = Number(req.query.depth || 20);
+
+    if (!symbol) {
+      return res.status(400).json({ message: "symbol query parameter is required." });
+    }
+
+    const snapshot = await getOrderBook(symbol, Number.isFinite(depth) ? Math.max(1, Math.min(depth, 100)) : 20);
+    return res.json(snapshot);
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "Unable to load order book." });
   }
 };

@@ -43,3 +43,27 @@ export class PaymentRailProvider {
     throw new Error("processWebhook must be implemented by the payment adapter.");
   }
 }
+
+export class EmailOtpProvider {
+  async sendVerification(_payload) {
+    throw new Error("sendVerification must be implemented by the email OTP adapter.");
+  }
+}
+
+export class SmsOtpProvider {
+  async sendVerification(_payload) {
+    throw new Error("sendVerification must be implemented by the SMS OTP adapter.");
+  }
+}
+
+export class PanVerificationProvider {
+  async verifyPan(_payload) {
+    throw new Error("verifyPan must be implemented by the PAN verification adapter.");
+  }
+}
+
+export class DocumentVerificationProvider {
+  async verifyDocuments(_payload) {
+    throw new Error("verifyDocuments must be implemented by the document verification adapter.");
+  }
+}

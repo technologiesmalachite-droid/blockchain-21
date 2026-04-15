@@ -19,6 +19,13 @@ export type RegisterPayload = {
   privacyAccepted: boolean;
 };
 
+export type FirebaseSessionPayload = {
+  idToken: string;
+  countryCode?: string;
+  termsAccepted?: boolean;
+  privacyAccepted?: boolean;
+};
+
 type AuthResponse = AuthSession;
 
 export const loginRequest = (payload: LoginPayload) =>
@@ -29,6 +36,12 @@ export const loginRequest = (payload: LoginPayload) =>
 
 export const registerRequest = (payload: RegisterPayload) =>
   apiRequest<AuthResponse>("/auth/register", {
+    method: "POST",
+    body: payload,
+  });
+
+export const firebaseSessionRequest = (payload: FirebaseSessionPayload) =>
+  apiRequest<AuthResponse>("/auth/firebase/session", {
     method: "POST",
     body: payload,
   });
@@ -45,7 +58,7 @@ export const getProfileRequest = () =>
   });
 
 export const sendVerificationCodeRequest = (channel: "email" | "phone") =>
-  apiRequest<{ message: string; challengeId: string; expiresAt: string; testCode?: string }>("/auth/verification/send", {
+  apiRequest<{ message: string; challengeId: string; expiresAt: string }>("/auth/verification/send", {
     auth: "required",
     method: "POST",
     body: { channel },

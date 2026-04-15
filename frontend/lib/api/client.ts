@@ -57,6 +57,13 @@ const toPublicErrorMessage = (status: number) => {
   return "We couldn't complete this request right now. Please try again.";
 };
 
+const getApiErrorMessage = async (response: Response) => {
+  const fallback = toPublicErrorMessage(response.status);
+  const payload = await parseJson<{ message?: string }>(response);
+  const message = typeof payload?.message === "string" ? payload.message.trim() : "";
+  return message || fallback;
+};
+
 const parseJson = async <T>(response: Response): Promise<T> => {
   if (response.status === 204) {
     return null as T;
@@ -225,16 +232,18 @@ export const apiRequest = async <T>(path: string, options: ApiRequestOptions = {
   }
 
   if (response.status === 401 || response.status === 403) {
+    const message = await getApiErrorMessage(response);
+
     if (authMode === "required") {
       handleAuthFailure();
-      throw new ApiRequestError("Authentication required.", response.status, response.status === 403 ? "forbidden" : "unauthorized");
+      throw new ApiRequestError(message || "Authentication required.", response.status, response.status === 403 ? "forbidden" : "unauthorized");
     }
 
-    throw new ApiRequestError("You are not authorized to access this resource.", response.status, response.status === 403 ? "forbidden" : "unauthorized");
+    throw new ApiRequestError(message || "You are not authorized to access this resource.", response.status, response.status === 403 ? "forbidden" : "unauthorized");
   }
 
   if (!response.ok) {
-    throw new ApiRequestError(toPublicErrorMessage(response.status), response.status, "request_failed");
+    throw new ApiRequestError(await getApiErrorMessage(response), response.status, "request_failed");
   }
 
   return parseJson<T>(response);

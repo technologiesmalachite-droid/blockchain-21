@@ -111,7 +111,7 @@ export default function OrdersPage() {
                         <span className={order.side === "buy" ? "text-emerald-400" : "text-rose-400"}>{order.side.toUpperCase()}</span>
                         <span className="text-muted">{order.status}</span>
                         <span className="text-muted">Qty {formatNumber(order.quantity, 4)}</span>
-                        <span className="text-muted">Price {formatNumber(order.price, 2)}</span>
+                        <span className="text-muted">Price {order.price != null ? formatNumber(order.price, 2) : "MKT"}</span>
                         <span className="text-muted">{formatDate(order.createdAt)}</span>
                       </div>
                     ))}

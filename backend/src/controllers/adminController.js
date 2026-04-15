@@ -5,7 +5,13 @@ import { supportTicketsRepository } from "../repositories/supportTicketsReposito
 import { usersRepository, accountRestrictionsRepository } from "../repositories/usersRepository.js";
 import { walletTransactionsRepository } from "../repositories/walletTransactionsRepository.js";
 import { closeComplianceCase } from "../services/complianceService.js";
-import { listKycQueue, reviewKycSubmission } from "../services/kycService.js";
+import {
+  getKycDocumentFile,
+  listKycCaseDocuments,
+  listKycQueue,
+  purgeExpiredKycDocuments,
+  reviewKycSubmission,
+} from "../services/kycService.js";
 
 export const getAdminUsers = async (_req, res) => {
   const users = await usersRepository.listAll();
@@ -30,6 +36,30 @@ export const getAdminUsers = async (_req, res) => {
 };
 
 export const getAdminKyc = async (_req, res) => res.json({ items: await listKycQueue() });
+
+export const getAdminKycCaseDocuments = async (req, res) => {
+  try {
+    const items = await listKycCaseDocuments(req.params.caseId);
+    return res.json({ items });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
+
+export const getAdminKycDocumentPreview = async (req, res) => {
+  try {
+    const payload = await getKycDocumentFile({
+      actor: req.user,
+      documentId: req.params.documentId,
+    });
+
+    res.setHeader("Content-Type", payload.mimeType);
+    res.setHeader("Content-Disposition", `inline; filename=\"${payload.fileName}\"`);
+    return res.send(payload.buffer);
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
 
 export const getAdminTransactions = async (_req, res) => res.json({ items: await walletTransactionsRepository.listAllForAdmin() });
 
@@ -102,11 +132,13 @@ export const postKycReviewDecision = async (req, res) => {
       submissionId: req.validated.body.submissionId,
       decision: req.validated.body.decision,
       note: req.validated.body.note,
+      rejectionReason: req.validated.body.rejectionReason,
     });
 
     return res.json({ submission, message: "KYC review updated." });
   } catch (error) {
-    return res.status(404).json({ message: error.message });
+    const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 400;
+    return res.status(statusCode).json({ message: error.message });
   }
 };
 
@@ -155,3 +187,15 @@ export const resolveComplianceCase = async (req, res) => {
 };
 
 export const getAuditLogs = async (_req, res) => res.json({ items: await auditLogsRepository.listRecent(200) });
+
+export const purgeExpiredKycDocumentsController = async (req, res) => {
+  try {
+    const result = await purgeExpiredKycDocuments({ actor: req.user });
+    return res.json({
+      ...result,
+      message: "Expired KYC documents purge completed.",
+    });
+  } catch (error) {
+    return res.status(400).json({ message: error.message });
+  }
+};
