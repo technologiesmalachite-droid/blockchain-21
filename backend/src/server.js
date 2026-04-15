@@ -21,6 +21,11 @@ const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
+app.get("/api/health", (req, res) => {
+  console.info(`[health] ${new Date().toISOString()} ${req.method} ${req.originalUrl}`);
+  res.status(200).json({ ok: true });
+});
+
 const allowedOrigins = new Set(env.clientUrls);
 const allowedOriginPatterns = env.clientUrlPatterns;
 
@@ -81,38 +86,6 @@ app.use((error, _req, res, next) => {
 });
 app.use(cookieParser());
 
-app.get("/api/health", async (_req, res) => {
-  let database = "up";
-
-  try {
-    await query("SELECT 1");
-  } catch {
-    database = "down";
-  }
-
-  const hasConfigurationWarnings = env.configurationWarnings.length > 0;
-  const status = database === "up" ? (hasConfigurationWarnings ? "warning" : "ok") : "degraded";
-  const statusCode = database === "up" ? 200 : 503;
-
-  res.status(statusCode).json({
-    status,
-    service: "MalachiteX API",
-    mode: "live-ready",
-    timestamp: new Date().toISOString(),
-    checks: {
-      database,
-    },
-    configuration: {
-      ok: env.configurationWarnings.length === 0,
-      warningCount: env.configurationWarnings.length,
-    },
-    cors: {
-      exactOrigins: env.clientUrls,
-      wildcardPatterns: env.clientUrlPatterns,
-    },
-  });
-});
-
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/markets", marketRoutes);
@@ -146,15 +119,13 @@ const logStartupDiagnostics = async () => {
   }
 };
 
-const resolvedPort = Number(process.env.PORT || env.port || 5000);
-const requestedHost = String(process.env.HOST || "").trim();
-const resolvedHost =
-  requestedHost && requestedHost !== "localhost" && requestedHost !== "127.0.0.1"
-    ? requestedHost
-    : "0.0.0.0";
+const PORT = Number(process.env.PORT);
+const HOST = "0.0.0.0";
+const resolvedPort = Number.isFinite(PORT) && PORT > 0 ? PORT : Number(env.port || 5000);
 
-app.listen(resolvedPort, resolvedHost, () => {
-  console.log(`MalachiteX API running on http://${resolvedHost}:${resolvedPort}`);
+app.listen(resolvedPort, HOST, () => {
+  console.log(`[startup] process.env.PORT=${process.env.PORT ?? "undefined"} resolvedPort=${resolvedPort} host=${HOST}`);
+  console.log(`MalachiteX API running on http://${HOST}:${resolvedPort}`);
   logStartupDiagnostics().catch((error) => {
     console.error("Startup diagnostics failed unexpectedly.", {
       message: typeof error?.message === "string" ? error.message : String(error),
