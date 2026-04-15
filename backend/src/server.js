@@ -146,8 +146,15 @@ const logStartupDiagnostics = async () => {
   }
 };
 
-app.listen(env.port, () => {
-  console.log(`MalachiteX API running on http://localhost:${env.port}`);
+const resolvedPort = Number(process.env.PORT || env.port || 5000);
+const requestedHost = String(process.env.HOST || "").trim();
+const resolvedHost =
+  requestedHost && requestedHost !== "localhost" && requestedHost !== "127.0.0.1"
+    ? requestedHost
+    : "0.0.0.0";
+
+app.listen(resolvedPort, resolvedHost, () => {
+  console.log(`MalachiteX API running on http://${resolvedHost}:${resolvedPort}`);
   logStartupDiagnostics().catch((error) => {
     console.error("Startup diagnostics failed unexpectedly.", {
       message: typeof error?.message === "string" ? error.message : String(error),
