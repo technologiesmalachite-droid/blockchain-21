@@ -10,6 +10,7 @@ import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/
 const refreshTokenExpiry = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 const knownAuthMessages = new Set([
   "An account with this email already exists.",
+  "An account with this email or phone already exists.",
   "Terms and privacy consent are required to create an account.",
   "Firebase account is missing a verified email address.",
   "Firebase account is missing a valid UID.",
@@ -20,6 +21,29 @@ const knownAuthMessages = new Set([
   "This account is frozen pending compliance review.",
   "Two-factor verification is required.",
 ]);
+
+const logAuthInfo = (event, details = {}) => {
+  console.info(
+    JSON.stringify({
+      level: "info",
+      event,
+      ...details,
+    }),
+  );
+};
+
+const logAuthError = (event, error, details = {}) => {
+  console.error(
+    JSON.stringify({
+      level: "error",
+      event,
+      ...details,
+      code: typeof error?.code === "string" ? error.code : null,
+      message: typeof error?.message === "string" ? error.message : "Unknown error",
+      stack: typeof error?.stack === "string" ? error.stack : null,
+    }),
+  );
+};
 
 const isInfrastructureIssue = (error) => {
   if (!error) {
@@ -103,15 +127,28 @@ const knownMessageOrFallback = (error, fallback) => {
 };
 
 const respondWithSession = async (res, user, req) => {
+  logAuthInfo("auth_session_issue_start", {
+    requestId: req.requestId,
+    userId: user.id,
+    route: req.originalUrl,
+  });
+
   const accessToken = signAccessToken(user);
   const refreshToken = signRefreshToken(user);
 
-  await sessionsRepository.create({
+  const session = await sessionsRepository.create({
     userId: user.id,
     token: refreshToken,
     userAgent: req.headers["user-agent"] || "unknown",
     ipAddress: req.ip || req.socket?.remoteAddress || "unknown",
     expiresAt: refreshTokenExpiry(),
+  });
+
+  logAuthInfo("auth_session_issue_success", {
+    requestId: req.requestId,
+    userId: user.id,
+    sessionId: session.id,
+    route: req.originalUrl,
   });
 
   return res.json({
@@ -121,8 +158,26 @@ const respondWithSession = async (res, user, req) => {
 };
 
 export const register = async (req, res) => {
+  logAuthInfo("register_request_received", {
+    requestId: req.requestId,
+    route: req.originalUrl,
+    email: req.validated?.body?.email || null,
+    phone: req.validated?.body?.phone || null,
+    validationPassed: Boolean(req.validated?.body),
+  });
+
   try {
+    logAuthInfo("register_user_create_start", {
+      requestId: req.requestId,
+      email: req.validated?.body?.email || null,
+    });
+
     const user = await createUser(req.validated.body);
+
+    logAuthInfo("register_user_create_success", {
+      requestId: req.requestId,
+      userId: user.id,
+    });
 
     await auditLogsRepository.create({
       action: "verification_channels_ready",
@@ -135,31 +190,63 @@ export const register = async (req, res) => {
       },
     });
 
-    return respondWithSession(res.status(201), user, req);
+    logAuthInfo("register_audit_log_success", {
+      requestId: req.requestId,
+      userId: user.id,
+      action: "verification_channels_ready",
+    });
+
+    await respondWithSession(res.status(201), user, req);
+    return;
   } catch (error) {
     if (error?.code === "23505") {
+      logAuthInfo("register_duplicate_conflict", {
+        requestId: req.requestId,
+        email: req.validated?.body?.email || null,
+        phone: req.validated?.body?.phone || null,
+        code: error.code,
+      });
       return res.status(409).json({ message: "An account with this email or phone already exists." });
     }
 
-    if (isInfrastructureIssue(error)) {
-      console.error("Register failed due to database/infrastructure issue", error);
-      return res.status(503).json({ message: "Registration is temporarily unavailable. Please try again shortly." });
+    const knownMessage = knownMessageOrFallback(error, "");
+    if (knownMessage) {
+      logAuthInfo("register_validation_or_domain_error", {
+        requestId: req.requestId,
+        message: knownMessage,
+        email: req.validated?.body?.email || null,
+      });
+      return res.status(400).json({ message: knownMessage });
     }
 
-    return res.status(400).json({
-      message: knownMessageOrFallback(error, "Unable to create your account. Please review your details and try again."),
+    if (isInfrastructureIssue(error)) {
+      logAuthError("register_infrastructure_error", error, {
+        requestId: req.requestId,
+        email: req.validated?.body?.email || null,
+      });
+      return res.status(500).json({ message: "Registration is temporarily unavailable. Please try again shortly." });
+    }
+
+    logAuthError("register_unexpected_error", error, {
+      requestId: req.requestId,
+      email: req.validated?.body?.email || null,
     });
+    return res.status(500).json({ message: "Unable to create your account due to an unexpected server error." });
   }
 };
 
 export const login = async (req, res) => {
   try {
     const user = await authenticateUser(req.validated.body);
-    return respondWithSession(res, user, req);
+    await respondWithSession(res, user, req);
+    return;
   } catch (error) {
     if (isInfrastructureIssue(error)) {
-      console.error("Login failed due to database/infrastructure issue", error);
-      return res.status(503).json({ message: "Authentication is temporarily unavailable. Please try again shortly." });
+      logAuthError("login_infrastructure_error", error, {
+        requestId: req.requestId,
+        email: req.validated?.body?.email || null,
+      });
+      return res.status(500).json({ message: "Authentication is temporarily unavailable. Please try again shortly." });
     }
 
     return res.status(401).json({
@@ -316,11 +403,14 @@ export const firebaseSession = async (req, res) => {
       });
     }
 
-    return respondWithSession(res, user, req);
+    await respondWithSession(res, user, req);
+    return;
   } catch (error) {
     if (isInfrastructureIssue(error)) {
-      console.error("Firebase session exchange failed due infrastructure/config issue", error);
-      return res.status(503).json({ message: "Authentication is temporarily unavailable. Please try again shortly." });
+      logAuthError("firebase_session_infrastructure_error", error, {
+        requestId: req.requestId,
+      });
+      return res.status(500).json({ message: "Authentication is temporarily unavailable. Please try again shortly." });
     }
 
     if (isFirebaseTokenIssue(error)) {
