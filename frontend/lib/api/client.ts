@@ -200,8 +200,13 @@ export const apiRequest = async <T>(path: string, options: ApiRequestOptions = {
   let accessToken = authMode === "required" ? getAccessToken() : null;
 
   if (authMode === "required" && !accessToken) {
-    emitAuthRequired();
-    throw new ApiRequestError("Authentication required.", 401, "unauthorized");
+    const refreshedToken = await refreshAccessToken();
+    accessToken = refreshedToken || getAccessToken();
+
+    if (!accessToken) {
+      emitAuthRequired();
+      throw new ApiRequestError("Authentication required.", 401, "unauthorized");
+    }
   }
 
   let response: Response;

@@ -70,6 +70,94 @@ const clearAccessCookie = () => {
   document.cookie = `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
 };
 
+const readCookieValue = (name: string) => {
+  if (!isBrowser()) {
+    return null;
+  }
+
+  const encodedName = `${encodeURIComponent(name)}=`;
+  const parts = document.cookie.split(";");
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed.startsWith(encodedName)) {
+      continue;
+    }
+
+    const value = trimmed.slice(encodedName.length);
+    if (!value) {
+      return null;
+    }
+
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+
+  return null;
+};
+
+const readAccessTokenCookie = () => {
+  const token = readCookieValue(AUTH_COOKIE_NAME);
+  return token && token.trim() ? token.trim() : null;
+};
+
+const asString = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const normalizeStoredSession = (stored: unknown): AuthSession | null => {
+  if (!isObjectRecord(stored)) {
+    return null;
+  }
+
+  const user = isObjectRecord(stored.user) ? stored.user : null;
+  if (!user) {
+    return null;
+  }
+
+  const userId = asString(user.id);
+  const userEmail = asString(user.email);
+  const userFullName = asString(user.fullName);
+
+  if (!userId || !userEmail || !userFullName) {
+    return null;
+  }
+
+  const tokens = isObjectRecord(stored.tokens) ? stored.tokens : null;
+  const accessToken =
+    asString(tokens?.accessToken) ||
+    asString(stored.accessToken) ||
+    asString(stored.token) ||
+    readAccessTokenCookie() ||
+    "";
+  const refreshToken =
+    asString(tokens?.refreshToken) ||
+    asString(stored.refreshToken) ||
+    asString(stored.refresh_token) ||
+    "";
+
+  if (!accessToken) {
+    return null;
+  }
+
+  return {
+    user: {
+      ...(user as AuthUser),
+      id: userId,
+      email: userEmail,
+      fullName: userFullName,
+    },
+    tokens: {
+      accessToken,
+      refreshToken,
+    },
+  };
+};
+
 const emitSessionChanged = (session: AuthSession | null) => {
   if (!isBrowser()) {
     return;
@@ -91,17 +179,43 @@ export const readSession = (): AuthSession | null => {
     return null;
   }
 
-  const raw = window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+  let raw: string | null = null;
+
+  try {
+    raw = window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 
   if (!raw) {
     return null;
   }
 
   try {
-    return JSON.parse(raw) as AuthSession;
+    const parsed = JSON.parse(raw);
+    const normalized = normalizeStoredSession(parsed);
+
+    if (!normalized) {
+      try {
+        window.localStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+      } catch {
+        // Ignore localStorage cleanup failures.
+      }
+      return null;
+    }
+
+    if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
+      window.localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(normalized));
+    }
+
+    writeAccessCookie(normalized.tokens.accessToken);
+    return normalized;
   } catch {
-    window.localStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
-    clearAccessCookie();
+    try {
+      window.localStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+    } catch {
+      // Ignore localStorage cleanup failures.
+    }
     return null;
   }
 };
@@ -111,9 +225,16 @@ export const saveSession = (session: AuthSession) => {
     return;
   }
 
-  window.localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(session));
-  writeAccessCookie(session.tokens.accessToken);
-  emitSessionChanged(session);
+  const normalized = normalizeStoredSession(session);
+
+  if (!normalized) {
+    clearSession();
+    return;
+  }
+
+  window.localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(normalized));
+  writeAccessCookie(normalized.tokens.accessToken);
+  emitSessionChanged(normalized);
 };
 
 export const updateAccessToken = (accessToken: string): AuthSession | null => {
@@ -140,10 +261,15 @@ export const clearSession = () => {
     return;
   }
 
-  window.localStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+  try {
+    window.localStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+  } catch {
+    // Ignore localStorage cleanup failures.
+  }
   clearAccessCookie();
   emitSessionChanged(null);
 };
 
 export const getAccessToken = () => readSession()?.tokens.accessToken ?? null;
 export const getRefreshToken = () => readSession()?.tokens.refreshToken ?? null;
+export const hasAccessTokenCookie = () => Boolean(readAccessTokenCookie());

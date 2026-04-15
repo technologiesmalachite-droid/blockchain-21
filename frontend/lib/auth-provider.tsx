@@ -31,6 +31,9 @@ import {
   SESSION_CHANGED_EVENT,
   clearSession,
   emitAuthRequired,
+  getAccessToken,
+  getRefreshToken,
+  hasAccessTokenCookie,
   readSession,
   saveSession,
   type AuthSession,
@@ -129,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [syncingFirebaseSession, setSyncingFirebaseSession] = useState(false);
+  const [restoringSessionFromToken, setRestoringSessionFromToken] = useState(false);
   const [firebaseSessionSyncUid, setFirebaseSessionSyncUid] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ open: boolean; message: string }>({
     open: false,
@@ -226,6 +230,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false;
     };
   }, [session?.tokens.accessToken]);
+
+  useEffect(() => {
+    if (!sessionBootstrapped || status !== "unauthenticated" || session?.tokens.accessToken || restoringSessionFromToken) {
+      return;
+    }
+
+    if (!hasAccessTokenCookie()) {
+      return;
+    }
+
+    let active = true;
+    setRestoringSessionFromToken(true);
+
+    getProfileRequest()
+      .then((payload) => {
+        if (!active) {
+          return;
+        }
+
+        const accessToken = getAccessToken();
+        if (!accessToken) {
+          return;
+        }
+
+        saveSession({
+          user: payload.user,
+          tokens: {
+            accessToken,
+            refreshToken: getRefreshToken() || "",
+          },
+        });
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+
+        if (isAuthError(error)) {
+          clearSession();
+        }
+      })
+      .finally(() => {
+        if (!active) {
+          return;
+        }
+
+        setRestoringSessionFromToken(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [restoringSessionFromToken, session?.tokens.accessToken, sessionBootstrapped, status]);
 
   useEffect(() => {
     if (!firebaseReady || !firebaseUser || session?.tokens.accessToken || syncingFirebaseSession) {
@@ -513,7 +570,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const closeAuthModal = () => setAuthModal((current) => ({ ...current, open: false }));
 
-  const authBootstrapPending = !sessionBootstrapped || !firebaseReady;
+  const cookieSessionRecoveryPending =
+    sessionBootstrapped &&
+    status === "unauthenticated" &&
+    !session?.tokens.accessToken &&
+    hasAccessTokenCookie();
+  const authBootstrapPending = !sessionBootstrapped || !firebaseReady || restoringSessionFromToken || cookieSessionRecoveryPending;
   const resolvedStatus: AuthStatus =
     authBootstrapPending || status === "loading" || (syncingFirebaseSession && !session?.tokens.accessToken)
       ? "loading"
