@@ -1,13 +1,13 @@
 "use client";
 
 import { Copy } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ContentSection, PageHero } from "@/components/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ApiRequestError } from "@/lib/api/client";
-import { createDepositRequest, requestDepositAddress, type WalletDepositAddress } from "@/lib/api/private-data";
+import { createDepositRequest, fetchWalletHistory, requestDepositAddress, type WalletDepositAddress } from "@/lib/api/private-data";
 import { useAuth } from "@/lib/auth-provider";
 import { getAccessToken } from "@/lib/auth/session-store";
 import { useDemo } from "@/lib/demo-provider";
@@ -33,9 +33,112 @@ export default function DepositPage() {
   const [walletType, setWalletType] = useState<"spot" | "funding">("funding");
   const [amount, setAmount] = useState("1500");
   const [record, setRecord] = useState<WalletDepositAddress | null>(null);
+  const [depositState, setDepositState] = useState<{
+    key: "address_generated" | "awaiting_deposit" | "confirming" | "credited" | "failed";
+    label: string;
+    updatedAt?: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const availableNetworks = useMemo(() => assetNetworks[asset] || ["ERC20"], [asset]);
+
+  const mapHistoryStatus = (status: string) => {
+    const normalized = status.trim().toLowerCase();
+    if (normalized === "completed") {
+      return {
+        key: "credited" as const,
+        label: "Credited",
+      };
+    }
+    if (normalized === "confirming") {
+      return {
+        key: "confirming" as const,
+        label: "Confirming on network",
+      };
+    }
+    if (normalized === "pending_confirmation") {
+      return {
+        key: "awaiting_deposit" as const,
+        label: "Awaiting deposit",
+      };
+    }
+    if (normalized === "failed") {
+      return {
+        key: "failed" as const,
+        label: "Deposit failed",
+      };
+    }
+    return {
+      key: "awaiting_deposit" as const,
+      label: "Awaiting deposit",
+    };
+  };
+
+  const refreshDepositState = async () => {
+    if (status !== "authenticated") {
+      setDepositState(null);
+      return;
+    }
+
+    try {
+      const history = await fetchWalletHistory({
+        page: 1,
+        pageSize: 10,
+        type: "deposit",
+        asset,
+        network,
+        walletType,
+      });
+
+      const matched = history.items.find((item) => {
+        if (!record?.address) {
+          return true;
+        }
+
+        return item.address === record.address;
+      });
+
+      if (matched) {
+        const mapped = mapHistoryStatus(matched.status);
+        setDepositState({
+          key: mapped.key,
+          label: mapped.label,
+          updatedAt: matched.completedAt || matched.createdAt,
+        });
+        return;
+      }
+
+      if (record?.address) {
+        setDepositState({
+          key: "awaiting_deposit",
+          label: "Awaiting deposit",
+        });
+        return;
+      }
+
+      setDepositState(null);
+    } catch {
+      // Keep current state if history refresh fails.
+    }
+  };
+
+  useEffect(() => {
+    refreshDepositState();
+  }, [asset, network, walletType, status, record?.address]);
+
+  useEffect(() => {
+    if (status !== "authenticated" || !record?.address) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      refreshDepositState();
+    }, 15000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [status, record?.address, asset, network, walletType]);
 
   const generateAddress = async () => {
     if (status === "loading") {
@@ -69,6 +172,10 @@ export default function DepositPage() {
         walletType,
       });
       setRecord(response);
+      setDepositState({
+        key: "address_generated",
+        label: "Address generated",
+      });
       submitToast("Deposit address ready", "Use this address only for the selected asset and network.");
     } catch (error) {
       if (error instanceof ApiRequestError) {
@@ -133,6 +240,7 @@ export default function DepositPage() {
         amount: parsedAmount,
       });
       submitToast("Deposit intent created", response.message || "Your deposit is now tracked in wallet activity.");
+      await refreshDepositState();
     } catch (error) {
       if (error instanceof ApiRequestError) {
         console.warn("[wallet][deposit] create_intent_failed", {
@@ -233,6 +341,13 @@ export default function DepositPage() {
                 <p>Use only the selected network and asset pair.</p>
                 <p>Deposits are credited after network confirmations and compliance checks.</p>
                 <p>Deposit intents improve reconciliation and AML transaction monitoring.</p>
+              </div>
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
+                <p className="text-muted">Deposit status</p>
+                <p className="mt-1 text-white">
+                  {depositState?.label || "Generate address to start deposit tracking"}
+                </p>
+                {depositState?.updatedAt ? <p className="mt-1 text-xs text-muted">{new Date(depositState.updatedAt).toLocaleString()}</p> : null}
               </div>
               <Button className="mt-6 w-full" onClick={submitDepositRequest} disabled={busy || status !== "authenticated"}>
                 {busy ? "Submitting..." : "Create deposit intent"}

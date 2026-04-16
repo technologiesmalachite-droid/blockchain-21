@@ -43,13 +43,53 @@ const queryOptionalPositiveIntSchema = z.preprocess((value) => {
 
 export const registerSchema = z.object({
   body: z.object({
-    email: z.string().email(),
-    password: z.string().min(10),
-    phone: z.string().regex(phoneRegex, "Enter a valid mobile number."),
-    fullName: z.string().min(2),
-    countryCode: z.string().length(2).toUpperCase(),
-    termsAccepted: z.boolean(),
-    privacyAccepted: z.boolean(),
+    email: z
+      .string({
+        required_error: "Valid email is required",
+        invalid_type_error: "Valid email is required",
+      })
+      .trim()
+      .email("Valid email is required"),
+    password: z
+      .string({
+        required_error: "Password is required",
+        invalid_type_error: "Password is required",
+      })
+      .min(10, "Password must be at least 10 characters"),
+    phone: z
+      .string({
+        required_error: "Valid phone number required",
+        invalid_type_error: "Valid phone number required",
+      })
+      .trim()
+      .regex(phoneRegex, "Valid phone number required"),
+    fullName: z
+      .string({
+        required_error: "Full name is required",
+        invalid_type_error: "Full name is required",
+      })
+      .trim()
+      .min(2, "Full name is required"),
+    countryCode: z
+      .string({
+        required_error: "Country code required",
+        invalid_type_error: "Country code required",
+      })
+      .trim()
+      .length(2, "Country code required")
+      .toUpperCase(),
+    termsAccepted: z
+      .preprocess(toBooleanInput, z.boolean({
+        required_error: "Terms must be accepted",
+        invalid_type_error: "Terms must be accepted",
+      }))
+      .refine((value) => value === true, "Terms must be accepted"),
+    privacyAccepted: z
+      .preprocess(toBooleanInput, z.boolean({
+        required_error: "Privacy policy must be accepted",
+        invalid_type_error: "Privacy policy must be accepted",
+      }))
+      .refine((value) => value === true, "Privacy policy must be accepted"),
   }),
   query: z.object({}).optional(),
   params: z.object({}).optional(),
@@ -278,6 +318,12 @@ export const depositAddressSchema = z.object({
     network: z.string().min(2),
     walletType: z.enum(["spot", "funding"]).default("funding"),
   }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const walletDepositWebhookSchema = z.object({
+  body: z.record(z.unknown()),
   query: z.object({}).optional(),
   params: z.object({}).optional(),
 });

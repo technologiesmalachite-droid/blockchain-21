@@ -9,7 +9,6 @@ import { Card } from "@/components/ui/Card";
 import { getFriendlyAuthError, useAuth } from "@/lib/auth-provider";
 import { BRAND_NAME } from "@/lib/brand";
 import { useDemo } from "@/lib/demo-provider";
-import { isFirebaseClientConfigured } from "@/lib/firebase";
 import { extractBackendErrorMessage } from "@/lib/auth/error-messages";
 import { sanitizePostAuthPath } from "@/lib/auth/navigation";
 
@@ -43,7 +42,7 @@ type SignupPageClientProps = {
 
 export function SignupPageClient({ rawNextPath }: SignupPageClientProps) {
   const { submitToast } = useDemo();
-  const { signUp, signUpWithGoogle, authState, user } = useAuth();
+  const { signUp, authState, user } = useAuth();
   const router = useRouter();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -54,7 +53,6 @@ export function SignupPageClient({ rawNextPath }: SignupPageClientProps) {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState("");
 
   const signupNextPath = useMemo(() => sanitizePostAuthPath(rawNextPath, "/kyc"), [rawNextPath]);
@@ -109,15 +107,28 @@ export function SignupPageClient({ rawNextPath }: SignupPageClientProps) {
         throw new Error("Password and confirmation do not match.");
       }
 
-      await signUp({
+      const payload = {
         fullName: fullName.trim(),
         email: email.trim().toLowerCase(),
         phone: phone.trim(),
-        countryCode,
+        countryCode: countryCode.trim().toUpperCase(),
         password,
         termsAccepted,
         privacyAccepted,
-      });
+      };
+
+      if (process.env.NODE_ENV !== "production") {
+        console.log("signup payload:", {
+          fullName: payload.fullName,
+          email: payload.email,
+          phone: payload.phone,
+          countryCode: payload.countryCode,
+          termsAccepted: payload.termsAccepted,
+          privacyAccepted: payload.privacyAccepted,
+        });
+      }
+
+      await signUp(payload);
       submitToast("Account created", "Check your email for a verification link, then complete KYC to unlock full trading and withdrawal access.");
       router.replace(signupNextPath);
     } catch (requestError) {
@@ -125,26 +136,6 @@ export function SignupPageClient({ rawNextPath }: SignupPageClientProps) {
       setError(backendMessage || getFriendlyAuthError(requestError));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const onContinueWithGoogle = async () => {
-    setGoogleBusy(true);
-    setError("");
-
-    try {
-      await signUpWithGoogle({
-        countryCode,
-        termsAccepted,
-        privacyAccepted,
-      });
-      submitToast("Google account connected", "Account authenticated successfully.");
-      router.replace(signupNextPath);
-    } catch (requestError) {
-      const backendMessage = extractBackendErrorMessage(requestError);
-      setError(backendMessage || getFriendlyAuthError(requestError));
-    } finally {
-      setGoogleBusy(false);
     }
   };
 
@@ -271,11 +262,6 @@ export function SignupPageClient({ rawNextPath }: SignupPageClientProps) {
             <Button className="w-full" type="submit" disabled={busy}>
               {busy ? "Creating account..." : "Create account"}
             </Button>
-            {isFirebaseClientConfigured ? (
-              <Button className="w-full" type="button" variant="secondary" disabled={googleBusy || busy} onClick={onContinueWithGoogle}>
-                {googleBusy ? "Connecting..." : "Continue with Google"}
-              </Button>
-            ) : null}
             <p className="text-sm text-muted">
               Already registered?{" "}
               <Link href={`/login${signupNextPath ? `?next=${encodeURIComponent(signupNextPath)}` : ""}`} className="text-accent">

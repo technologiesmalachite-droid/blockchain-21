@@ -9,7 +9,6 @@ import { Card } from "@/components/ui/Card";
 import { useDemo } from "@/lib/demo-provider";
 import { getFriendlyAuthError, useAuth } from "@/lib/auth-provider";
 import { readSession } from "@/lib/auth/session-store";
-import { isFirebaseClientConfigured } from "@/lib/firebase";
 import { extractBackendErrorMessage } from "@/lib/auth/error-messages";
 import { sanitizePostAuthPath } from "@/lib/auth/navigation";
 import { ApiRequestError } from "@/lib/api/client";
@@ -44,7 +43,6 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
     sendEmailOtpLogin,
     verifyEmailOtpLogin,
     verifyTwoFactorLogin,
-    signInWithGoogle,
     resendEmailVerification,
     authState,
     emailOtpChallenge,
@@ -61,7 +59,6 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
   const [emailOtpCode, setEmailOtpCode] = useState("");
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [busy, setBusy] = useState(false);
-  const [googleBusy, setGoogleBusy] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -225,39 +222,6 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
     }
   };
 
-  const onContinueWithGoogle = async () => {
-    setGoogleBusy(true);
-    setError("");
-
-    try {
-      const result = await signInWithGoogle();
-
-      if (result.requiresTwoFactor) {
-        setError(result.message || "2FA code required. Enter your authenticator code to continue.");
-        return;
-      }
-
-      const session = readSession();
-
-      if (!session) {
-        submitToast("Redirecting", "Continuing sign-in with Google...");
-        return;
-      }
-
-      const requiresVerification = shouldRedirectToVerification(
-        session.user?.kycStatus,
-        session.user?.emailVerified,
-        session.user?.phoneVerified,
-      );
-      router.replace(requiresVerification ? "/kyc" : nextPath);
-    } catch (requestError) {
-      const backendMessage = extractBackendErrorMessage(requestError);
-      setError(backendMessage || getFriendlyAuthError(requestError));
-    } finally {
-      setGoogleBusy(false);
-    }
-  };
-
   const canResendVerification = !showTwoFactorStep && !usingEmailOtpFlow && error.toLowerCase().includes("verify your email");
 
   const onResendVerification = async () => {
@@ -390,7 +354,7 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
                 className="w-full"
                 type="button"
                 variant="secondary"
-                disabled={resendBusy || busy || googleBusy}
+                disabled={resendBusy || busy}
                 onClick={onResendVerification}
               >
                 {resendBusy ? "Sending verification..." : "Resend verification email"}
@@ -420,22 +384,10 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
                 className="w-full"
                 type="button"
                 variant="secondary"
-                disabled={busy || googleBusy}
+                disabled={busy}
                 onClick={usingEmailOtpFlow ? usePasswordMode : useEmailOtpMode}
               >
                 {usingEmailOtpFlow ? "Use email and password" : "Login with Email OTP"}
-              </Button>
-            ) : null}
-
-            {isFirebaseClientConfigured && !showTwoFactorStep && !usingEmailOtpFlow ? (
-              <Button
-                className="w-full"
-                type="button"
-                variant="secondary"
-                disabled={googleBusy || busy}
-                onClick={onContinueWithGoogle}
-              >
-                {googleBusy ? "Connecting..." : "Continue with Google"}
               </Button>
             ) : null}
 

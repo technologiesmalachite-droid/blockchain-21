@@ -4,6 +4,7 @@ import { depositAddressesRepository } from "../repositories/depositAddressesRepo
 import { walletAddressesRepository } from "../repositories/walletAddressesRepository.js";
 import { walletsRepository } from "../repositories/walletsRepository.js";
 import { providers } from "./providerRegistry.js";
+import { generateDepositAddress } from "./walletDepositProviderService.js";
 import {
   assertSupportedAsset,
   assertSupportedAssetNetwork,
@@ -68,7 +69,7 @@ export const getOrCreateDepositAddress = async ({ userId, asset, network, wallet
       return mapAddressRecord(existing, getWalletNetworkWarnings({ asset: assetCode, network: networkCode }), Boolean(networkDefinition.memoRequired));
     }
 
-    const providerResponse = await providers.custody.createDepositAddress({
+    const providerResponse = await generateDepositAddress({
       userId,
       walletId: wallet.id,
       asset: assetCode,

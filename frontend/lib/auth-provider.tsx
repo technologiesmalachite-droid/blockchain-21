@@ -1,10 +1,7 @@
 "use client";
 
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
-import type { User as FirebaseUser } from "firebase/auth";
-import { AuthRequiredModal } from "@/components/auth/AuthRequiredModal";
 import {
-  firebaseSessionRequest,
   getProfileRequest,
   loginRequest,
   logoutRequest,
@@ -17,17 +14,7 @@ import {
   type TwoFactorLoginChallenge,
 } from "@/lib/api/auth";
 import { ApiRequestError } from "@/lib/api/client";
-import {
-  deleteCurrentUserSafe,
-  getFirebaseErrorCode,
-  getFriendlyFirebaseAuthError,
-  observeAuthState,
-  resendCurrentUserVerificationEmail,
-  signInWithEmail,
-  signInWithGoogle,
-  signOutUser,
-  signUpWithEmail,
-} from "@/lib/firebase-auth";
+import { AuthRequiredModal } from "@/components/auth/AuthRequiredModal";
 import {
   AUTH_REQUIRED_EVENT,
   SESSION_CHANGED_EVENT,
@@ -58,12 +45,6 @@ type TwoFactorChallengeState = {
   createdAt: number;
 };
 
-type GoogleAuthOptions = {
-  countryCode?: string;
-  termsAccepted?: boolean;
-  privacyAccepted?: boolean;
-};
-
 type SignInResult = {
   requiresTwoFactor: boolean;
   loginToken?: string;
@@ -83,8 +64,6 @@ type AuthContextType = {
   verifyEmailOtpLogin: (payload: { email?: string; otp: string }) => Promise<SignInResult>;
   verifyTwoFactorLogin: (payload: { loginToken: string; code: string }) => Promise<void>;
   signUp: (payload: RegisterPayload) => Promise<void>;
-  signInWithGoogle: (options?: GoogleAuthOptions) => Promise<SignInResult>;
-  signUpWithGoogle: (options?: GoogleAuthOptions) => Promise<void>;
   resendEmailVerification: () => Promise<void>;
   signOut: () => Promise<void>;
   clearEmailOtpChallenge: () => void;
@@ -94,8 +73,6 @@ type AuthContextType = {
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
-const GOOGLE_INTENT_STORAGE_KEY = "malachitex.firebase.google.intent.v1";
-const EMAIL_VERIFICATION_REQUIRED_CODE = "auth/email-not-verified";
 const EMAIL_OTP_CHALLENGE_STORAGE_KEY = "malachitex.auth.email-otp.pending.v1";
 const TWO_FACTOR_CHALLENGE_STORAGE_KEY = "malachitex.auth.two-factor.pending.v1";
 
@@ -225,39 +202,6 @@ const persistTwoFactorChallenge = (challenge: TwoFactorChallengeState | null) =>
   window.sessionStorage.setItem(TWO_FACTOR_CHALLENGE_STORAGE_KEY, JSON.stringify(challenge));
 };
 
-const saveGoogleIntent = (options?: GoogleAuthOptions) => {
-  if (typeof window === "undefined" || !options) {
-    return;
-  }
-
-  window.sessionStorage.setItem(GOOGLE_INTENT_STORAGE_KEY, JSON.stringify(options));
-};
-
-const readGoogleIntent = (): GoogleAuthOptions | undefined => {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-
-  const raw = window.sessionStorage.getItem(GOOGLE_INTENT_STORAGE_KEY);
-  if (!raw) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(raw) as GoogleAuthOptions;
-  } catch {
-    return undefined;
-  }
-};
-
-const clearGoogleIntent = () => {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.sessionStorage.removeItem(GOOGLE_INTENT_STORAGE_KEY);
-};
-
 const signInSuccessResult = (): SignInResult => ({ requiresTwoFactor: false });
 
 const signInChallengeResult = (challenge: TwoFactorLoginChallenge): SignInResult => ({
@@ -295,25 +239,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [sessionBootstrapped, setSessionBootstrapped] = useState(false);
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
-  const [firebaseReady, setFirebaseReady] = useState(false);
-  const [syncingFirebaseSession, setSyncingFirebaseSession] = useState(false);
   const [restoringSessionFromToken, setRestoringSessionFromToken] = useState(false);
   const [hydrationTimedOut, setHydrationTimedOut] = useState(false);
   const [emailOtpChallenge, setEmailOtpChallenge] = useState<EmailOtpChallengeState | null>(null);
   const [twoFactorChallenge, setTwoFactorChallenge] = useState<TwoFactorChallengeState | null>(null);
-  const [firebaseSessionSyncUid, setFirebaseSessionSyncUid] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ open: boolean; message: string }>({
     open: false,
     message: "Please sign in to continue.",
   });
+
   const currentAccessToken = session?.tokens?.accessToken || null;
+
   const clearEmailOtpChallenge = () => {
     setEmailOtpChallenge(null);
   };
+
   const clearTwoFactorChallenge = () => {
     setTwoFactorChallenge(null);
   };
+
   const markTwoFactorChallenge = (challenge: TwoFactorLoginChallenge) => {
     setTwoFactorChallenge({
       loginToken: challenge.loginToken,
@@ -321,6 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       createdAt: Date.now(),
     });
   };
+
   const markEmailOtpChallenge = ({ email, message }: { email: string; message?: string }) => {
     setEmailOtpChallenge({
       email: email.trim().toLowerCase(),
@@ -346,7 +291,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (sessionBootstrapped && firebaseReady) {
+    if (sessionBootstrapped) {
       setHydrationTimedOut(false);
       return;
     }
@@ -358,7 +303,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const timeoutId = window.setTimeout(() => {
       logAuthProvider("hydration_timeout", {
         sessionBootstrapped,
-        firebaseReady,
       });
       setHydrationTimedOut(true);
     }, 6000);
@@ -366,7 +310,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [firebaseReady, sessionBootstrapped]);
+  }, [sessionBootstrapped]);
 
   useEffect(() => {
     persistEmailOtpChallenge(emailOtpChallenge);
@@ -375,35 +319,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     persistTwoFactorChallenge(twoFactorChallenge);
   }, [twoFactorChallenge]);
-
-  useEffect(() => {
-    const unsubscribe = observeAuthState((nextFirebaseUser) => {
-      setFirebaseUser(nextFirebaseUser);
-      setFirebaseReady(true);
-
-      if (!nextFirebaseUser) {
-        setFirebaseSessionSyncUid(null);
-      }
-    });
-
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    if (!firebaseReady || firebaseUser || !session?.tokens?.refreshToken) {
-      return;
-    }
-
-    const provider = (session.user?.authProvider || "local").toLowerCase();
-    if (provider === "local") {
-      return;
-    }
-
-    logoutRequest(session.tokens.refreshToken).catch(() => {});
-    clearEmailOtpChallenge();
-    clearTwoFactorChallenge();
-    clearSession();
-  }, [firebaseReady, firebaseUser, session?.tokens?.refreshToken, session?.user?.authProvider]);
 
   useEffect(() => {
     const onSessionChanged = (event: Event) => {
@@ -547,194 +462,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [hasActiveAccessToken, restoringSessionFromToken, sessionBootstrapped, status]);
 
-  useEffect(() => {
-    if (!firebaseReady || !firebaseUser || session?.tokens.accessToken || syncingFirebaseSession) {
-      return;
-    }
-
-    if (firebaseSessionSyncUid === firebaseUser.uid) {
-      return;
-    }
-
-    let active = true;
-    setSyncingFirebaseSession(true);
-    setFirebaseSessionSyncUid(firebaseUser.uid);
-
-    const intent = readGoogleIntent();
-
-    firebaseUser
-      .getIdToken()
-      .then((idToken) =>
-        firebaseSessionRequest({
-          idToken,
-          countryCode: intent?.countryCode,
-          termsAccepted: intent?.termsAccepted,
-          privacyAccepted: intent?.privacyAccepted,
-        }),
-      )
-      .then(async (result) => {
-        if (!active) {
-          return;
-        }
-
-        if (isTwoFactorChallenge(result)) {
-          clearSession();
-          clearEmailOtpChallenge();
-          markTwoFactorChallenge(result);
-          setAuthModal({
-            open: true,
-            message: result.message || "Two-factor verification is required. Continue from the sign-in page.",
-          });
-          if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-            const next = `${window.location.pathname}${window.location.search}`;
-            window.location.assign(`/login?next=${encodeURIComponent(next)}`);
-          }
-          return;
-        }
-
-        saveSession(result);
-        clearGoogleIntent();
-        setAuthModal((current) => ({ ...current, open: false }));
-      })
-      .catch(async (error) => {
-        if (!active) {
-          return;
-        }
-
-        const friendlyFirebaseError = getFriendlyFirebaseAuthError(error);
-        if (friendlyFirebaseError) {
-          setAuthModal({
-            open: true,
-            message: friendlyFirebaseError,
-          });
-          return;
-        }
-
-        if (error instanceof ApiRequestError && error.status === 400) {
-          setAuthModal({
-            open: true,
-            message: "Google account is authenticated but backend profile setup is incomplete. Please complete signup consent and try again.",
-          });
-          await signOutUser().catch(() => {});
-          return;
-        }
-
-        if (isAuthError(error)) {
-          clearEmailOtpChallenge();
-          clearTwoFactorChallenge();
-          clearSession();
-
-          if (firebaseUser?.emailVerified === false) {
-            setAuthModal({
-              open: true,
-              message: "Verify your email before continuing. You can resend verification from the sign-in page.",
-            });
-            return;
-          }
-
-          await signOutUser().catch(() => {});
-          return;
-        }
-
-        setAuthModal({
-          open: true,
-          message: "Unable to finalize session with the server. Please try again.",
-        });
-      })
-      .finally(() => {
-        if (!active) {
-          return;
-        }
-        setSyncingFirebaseSession(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [firebaseReady, firebaseSessionSyncUid, firebaseUser, session?.tokens.accessToken, syncingFirebaseSession]);
-
   const signIn = async (payload: LoginPayload) => {
-    let firebaseSignedIn = false;
     clearSession();
     clearEmailOtpChallenge();
     clearTwoFactorChallenge();
 
-    try {
-      try {
-        const firebaseCredential = await signInWithEmail(payload.email, payload.password);
-        firebaseSignedIn = true;
-
-        if (!firebaseCredential.user.emailVerified) {
-          await resendCurrentUserVerificationEmail().catch(() => false);
-          const verificationError = new Error(
-            "Please verify your email before signing in. A verification email has been sent.",
-          ) as Error & { code?: string };
-          verificationError.code = EMAIL_VERIFICATION_REQUIRED_CODE;
-          throw verificationError;
-        }
-
-        const idToken = await firebaseCredential.user.getIdToken();
-        const result = await firebaseSessionRequest({ idToken });
-
-        if (isTwoFactorChallenge(result)) {
-          clearSession();
-          clearEmailOtpChallenge();
-          markTwoFactorChallenge(result);
-          return signInChallengeResult(result);
-        }
-
-        saveSession(result);
-        clearTwoFactorChallenge();
-        clearGoogleIntent();
-        setAuthModal((current) => ({ ...current, open: false }));
-        return signInSuccessResult();
-      } catch (firebaseError) {
-        if (firebaseError instanceof ApiRequestError) {
-          throw firebaseError;
-        }
-
-        const friendlyFirebaseError = getFriendlyFirebaseAuthError(firebaseError);
-        const firebaseCode = getFirebaseErrorCode(firebaseError);
-
-        if (firebaseCode === EMAIL_VERIFICATION_REQUIRED_CODE) {
-          throw firebaseError;
-        }
-
-        const canFallbackToLegacyLogin =
-          firebaseCode === "auth/user-not-found" || firebaseCode === "auth/configuration-not-found";
-
-        if (!canFallbackToLegacyLogin) {
-          throw new Error(friendlyFirebaseError || "Unable to authenticate with Firebase.");
-        }
-
-        if (firebaseCode === "auth/configuration-not-found" && !friendlyFirebaseError) {
-          throw new Error("Authentication is not configured yet. Please contact support.");
-        }
-      }
-
-      const result = await loginRequest(payload);
-      if (isTwoFactorChallenge(result)) {
-        clearSession();
-        clearEmailOtpChallenge();
-        markTwoFactorChallenge(result);
-        return signInChallengeResult(result);
-      }
-
-      saveSession(result);
-      clearTwoFactorChallenge();
-      clearGoogleIntent();
-      setAuthModal((current) => ({ ...current, open: false }));
-      return signInSuccessResult();
-    } catch (error) {
-      const firebaseCode = getFirebaseErrorCode(error);
-      const preserveFirebaseSession = firebaseCode === EMAIL_VERIFICATION_REQUIRED_CODE;
-
-      if (firebaseSignedIn && !preserveFirebaseSession) {
-        await signOutUser().catch(() => {});
-      }
-
-      throw error;
+    const result = await loginRequest(payload);
+    if (isTwoFactorChallenge(result)) {
+      clearSession();
+      clearEmailOtpChallenge();
+      markTwoFactorChallenge(result);
+      return signInChallengeResult(result);
     }
+
+    saveSession(result);
+    clearTwoFactorChallenge();
+    setAuthModal((current) => ({ ...current, open: false }));
+    return signInSuccessResult();
   };
 
   const verifyTwoFactorLogin = async ({ loginToken, code }: { loginToken: string; code: string }) => {
@@ -742,7 +486,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     saveSession(sessionPayload);
     clearEmailOtpChallenge();
     clearTwoFactorChallenge();
-    clearGoogleIntent();
     setAuthModal((current) => ({ ...current, open: false }));
   };
 
@@ -780,100 +523,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     saveSession(result);
     clearEmailOtpChallenge();
     clearTwoFactorChallenge();
-    clearGoogleIntent();
     setAuthModal((current) => ({ ...current, open: false }));
     return signInSuccessResult();
   };
 
   const signUp = async (payload: RegisterPayload) => {
-    let firebaseUserCreated = false;
-
-    try {
-      try {
-        await signUpWithEmail(payload.email, payload.password, payload.fullName);
-        firebaseUserCreated = true;
-        await resendCurrentUserVerificationEmail().catch(() => false);
-      } catch (firebaseError) {
-        const firebaseCode = getFirebaseErrorCode(firebaseError);
-        if (firebaseCode !== "auth/configuration-not-found") {
-          throw firebaseError;
-        }
-      }
-
-      const result = await registerRequest(payload);
-      saveSession(result);
-      clearEmailOtpChallenge();
-      clearTwoFactorChallenge();
-      clearGoogleIntent();
-      setAuthModal((current) => ({ ...current, open: false }));
-    } catch (error) {
-      if (firebaseUserCreated) {
-        await deleteCurrentUserSafe();
-        await signOutUser().catch(() => {});
-      }
-
-      throw error;
-    }
-  };
-
-  const signInWithGoogleAccount = async (options?: GoogleAuthOptions) => {
+    const result = await registerRequest(payload);
+    saveSession(result);
     clearEmailOtpChallenge();
     clearTwoFactorChallenge();
-    saveGoogleIntent(options);
-
-    const googleResult = await signInWithGoogle();
-
-    if (googleResult.redirected) {
-      return signInSuccessResult();
-    }
-
-    const idToken = await googleResult.credential.user.getIdToken();
-
-    try {
-      const result = await firebaseSessionRequest({
-        idToken,
-        countryCode: options?.countryCode,
-        termsAccepted: options?.termsAccepted,
-        privacyAccepted: options?.privacyAccepted,
-      });
-
-      if (isTwoFactorChallenge(result)) {
-        clearSession();
-        clearEmailOtpChallenge();
-        markTwoFactorChallenge(result);
-        return signInChallengeResult(result);
-      }
-
-      saveSession(result);
-      clearTwoFactorChallenge();
-      clearGoogleIntent();
-      setAuthModal((current) => ({ ...current, open: false }));
-      return signInSuccessResult();
-    } catch (error) {
-      await signOutUser().catch(() => {});
-      throw error;
-    }
-  };
-
-  const signInWithGoogleHandler = async (options?: GoogleAuthOptions) => signInWithGoogleAccount(options);
-
-  const signUpWithGoogleHandler = async (options?: GoogleAuthOptions) => {
-    if (!options?.termsAccepted || !options?.privacyAccepted) {
-      throw new Error("Terms and privacy consent are required before continuing with Google.");
-    }
-
-    const result = await signInWithGoogleAccount(options);
-    if (result.requiresTwoFactor) {
-      await signOutUser().catch(() => {});
-      throw new Error("This account already exists with two-factor authentication enabled. Please sign in instead.");
-    }
+    setAuthModal((current) => ({ ...current, open: false }));
   };
 
   const resendEmailVerification = async () => {
-    const sent = await resendCurrentUserVerificationEmail();
-    if (!sent) {
-      throw new Error("Email is already verified.");
-    }
+    throw new Error("Email verification resend is not available in backend-only auth mode.");
   };
 
   const signOut = async () => {
@@ -885,10 +548,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Session cleanup is handled locally even if logout request fails.
     }
 
-    await signOutUser().catch(() => {});
     clearEmailOtpChallenge();
     clearTwoFactorChallenge();
-    clearGoogleIntent();
     clearSession();
   };
 
@@ -905,9 +566,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (hasAccessTokenCookie() || hasRefreshTokenCookie());
   const authBootstrapPending =
     !hydrationTimedOut &&
-    (!sessionBootstrapped || !firebaseReady || restoringSessionFromToken || cookieSessionRecoveryPending);
+    (!sessionBootstrapped || restoringSessionFromToken || cookieSessionRecoveryPending);
   const resolvedAuthState: AuthState =
-    authBootstrapPending || status === "loading" || (syncingFirebaseSession && !session?.tokens.accessToken)
+    authBootstrapPending || status === "loading"
       ? "loading"
       : hasActiveAccessToken
         ? "authenticated"
@@ -915,7 +576,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? "two_factor_pending"
           : emailOtpChallenge?.email
             ? "email_otp_pending"
-          : "logged_out";
+            : "logged_out";
   const resolvedStatus: AuthStatus = resolvedAuthState === "loading"
     ? "loading"
     : resolvedAuthState === "authenticated"
@@ -927,7 +588,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status: resolvedStatus,
       authState: resolvedAuthState,
       authBootstrapPending,
-      syncingFirebaseSession,
       restoringSessionFromToken,
       hydrationTimedOut,
       hasSession: Boolean(session),
@@ -936,7 +596,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       emailOtpPending: Boolean(emailOtpChallenge?.email),
       twoFactorPending: Boolean(twoFactorChallenge?.loginToken),
     });
-  }, [authBootstrapPending, emailOtpChallenge?.email, hydrationTimedOut, resolvedAuthState, resolvedStatus, restoringSessionFromToken, session, syncingFirebaseSession, twoFactorChallenge?.loginToken]);
+  }, [authBootstrapPending, emailOtpChallenge?.email, hydrationTimedOut, resolvedAuthState, resolvedStatus, restoringSessionFromToken, session, twoFactorChallenge?.loginToken]);
 
   const value = useMemo<AuthContextType>(
     () => ({
@@ -952,8 +612,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       verifyEmailOtpLogin,
       verifyTwoFactorLogin,
       signUp,
-      signInWithGoogle: signInWithGoogleHandler,
-      signUpWithGoogle: signUpWithGoogleHandler,
       resendEmailVerification,
       signOut,
       clearEmailOtpChallenge,
@@ -1031,11 +689,6 @@ export const getFriendlyAuthError = (error: unknown) => {
     knownMessageLower.includes("session is invalid or expired")
   ) {
     return "Session expired, please sign in again.";
-  }
-
-  const firebaseMessage = getFriendlyFirebaseAuthError(error);
-  if (firebaseMessage) {
-    return firebaseMessage;
   }
 
   if (error instanceof Error && !(error instanceof ApiRequestError)) {

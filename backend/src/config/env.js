@@ -98,6 +98,19 @@ const parseAuthEmailProvider = (value) => {
   throw new Error("AUTH_EMAIL_PROVIDER must be set to 'resend'.");
 };
 
+const parseWalletDepositProvider = (value) => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!normalized) {
+    return "sandbox";
+  }
+
+  if (normalized === "sandbox" || normalized === "mock") {
+    return "sandbox";
+  }
+
+  return normalized;
+};
+
 const configuredClientUrls = mergeUnique(
   parseOrigins(process.env.CLIENT_URLS),
   parseOrigins(process.env.FRONTEND_URLS),
@@ -145,6 +158,11 @@ const authEmailProvider = parseAuthEmailProvider(process.env.AUTH_EMAIL_PROVIDER
 const authEmailOtpResendApiKey = process.env.RESEND_API_KEY || "";
 const authEmailOtpFromEmail = process.env.AUTH_EMAIL_OTP_FROM_EMAIL || process.env.EMAIL_FROM || "";
 const authEmailOtpFromName = process.env.AUTH_EMAIL_OTP_FROM_NAME || "MalachiteX Security";
+const walletDepositProvider = parseWalletDepositProvider(process.env.WALLET_DEPOSIT_PROVIDER);
+const walletDepositWebhookSecret = process.env.WALLET_DEPOSIT_WEBHOOK_SECRET || "";
+const walletDepositWebhookSignatureHeader = (process.env.WALLET_DEPOSIT_WEBHOOK_SIGNATURE_HEADER || "x-wallet-signature")
+  .trim()
+  .toLowerCase();
 const maskApiKey = (value) => {
   const key = String(value || "").trim();
   if (!key) {
@@ -213,6 +231,10 @@ if (nodeEnv === "production" && authEmailProvider === "resend") {
   if (!authEmailOtpFromEmail) {
     configurationWarnings.push("EMAIL_FROM (or AUTH_EMAIL_OTP_FROM_EMAIL) is not configured for production.");
   }
+}
+
+if (nodeEnv === "production" && !walletDepositWebhookSecret) {
+  configurationWarnings.push("WALLET_DEPOSIT_WEBHOOK_SECRET is not configured for secure deposit webhooks.");
 }
 
 assertProductionSecret("JWT_SECRET", jwtSecret, 32);
@@ -298,5 +320,8 @@ export const env = {
   walletWithdrawRateLimitMax: parsePositiveNumber(process.env.WALLET_WITHDRAW_RATE_LIMIT_MAX, 12),
   walletSwapRateLimitWindowMs: parsePositiveNumber(process.env.WALLET_SWAP_RATE_LIMIT_WINDOW, 60000),
   walletSwapRateLimitMax: parsePositiveNumber(process.env.WALLET_SWAP_RATE_LIMIT_MAX, 24),
+  walletDepositProvider,
+  walletDepositWebhookSecret,
+  walletDepositWebhookSignatureHeader,
   configurationWarnings,
 };

@@ -42,6 +42,19 @@ const readNestedMessage = (value: unknown): string => {
   return "";
 };
 
+const readValidationIssueMessage = (value: unknown): string => {
+  if (!isRecord(value) || !Array.isArray(value.issues) || value.issues.length === 0) {
+    return "";
+  }
+
+  const firstIssue = value.issues[0];
+  if (!isRecord(firstIssue) || typeof firstIssue.message !== "string") {
+    return "";
+  }
+
+  return firstIssue.message.trim();
+};
+
 export const extractBackendErrorMessage = (requestError: unknown): string => {
   const fromApiRequestError = requestError instanceof ApiRequestError ? requestError.message?.trim() || "" : "";
   const fromResponse = isRecord(requestError) ? readNestedMessage(requestError.response) : "";
@@ -49,11 +62,25 @@ export const extractBackendErrorMessage = (requestError: unknown): string => {
     isRecord(requestError) && "response" in requestError && isRecord(requestError.response)
       ? readNestedMessage(requestError.response.data)
       : "";
+  const fromResponseValidationIssue =
+    isRecord(requestError) && "response" in requestError && isRecord(requestError.response)
+      ? readValidationIssueMessage(requestError.response.data)
+      : "";
+  const fromDirectValidationIssue = readValidationIssueMessage(requestError);
   const fromDirect = readNestedMessage(requestError);
   const fromTopMessage = isRecord(requestError) && typeof requestError.message === "string" ? requestError.message.trim() : "";
   const parsedFromTopMessage = parseJsonMessageString(fromTopMessage);
 
-  const candidates = [fromResponseData, fromResponse, fromDirect, parsedFromTopMessage, fromApiRequestError, fromTopMessage];
+  const candidates = [
+    fromResponseData,
+    fromResponseValidationIssue,
+    fromResponse,
+    fromDirectValidationIssue,
+    fromDirect,
+    parsedFromTopMessage,
+    fromApiRequestError,
+    fromTopMessage,
+  ];
 
   for (const candidate of candidates) {
     if (candidate) {

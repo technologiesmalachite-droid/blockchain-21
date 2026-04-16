@@ -9,7 +9,7 @@ export const depositRecordsRepository = {
         expected_amount, tx_hash, source_address, status,
         confirmations_required, confirmations_count, idempotency_key, metadata
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)
-      ON CONFLICT (idempotency_key)
+      ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
       DO UPDATE SET
         status = EXCLUDED.status,
         tx_hash = COALESCE(EXCLUDED.tx_hash, deposit_records.tx_hash),
@@ -46,5 +46,18 @@ export const depositRecordsRepository = {
     );
 
     return toCamelRows(rows);
+  },
+
+  async findByIdempotencyKey(idempotencyKey, db = { query }) {
+    const { rows } = await db.query(
+      `SELECT *
+       FROM deposit_records
+       WHERE idempotency_key = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [idempotencyKey],
+    );
+
+    return toCamelRows(rows)[0] || null;
   },
 };

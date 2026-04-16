@@ -154,6 +154,66 @@ export const walletTransactionsRepository = {
     return toCamelRows(rows)[0] || null;
   },
 
+  async findByIdempotencyKey(idempotencyKey, db = { query }) {
+    const { rows } = await db.query(
+      `SELECT *
+       FROM wallet_transactions
+       WHERE idempotency_key = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [idempotencyKey],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
+  async findLatestDepositByAddress({ userId, asset, network, destinationAddress }, db = { query }) {
+    const { rows } = await db.query(
+      `SELECT *
+       FROM wallet_transactions
+       WHERE user_id = $1
+         AND transaction_type = 'deposit'
+         AND asset = $2
+         AND network = $3
+         AND destination_address = $4
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId, asset, network, destinationAddress],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
+  async updateById(transactionId, updates, db = { query }) {
+    const { rows } = await db.query(
+      `UPDATE wallet_transactions
+       SET status = COALESCE($2, status),
+           tx_hash = COALESCE($3, tx_hash),
+           source_address = COALESCE($4, source_address),
+           provider_reference = COALESCE($5, provider_reference),
+           failure_reason = COALESCE($6, failure_reason),
+           completed_at = COALESCE($7, completed_at),
+           metadata = wallet_transactions.metadata || $8::jsonb,
+           idempotency_key = COALESCE(wallet_transactions.idempotency_key, $9),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        transactionId,
+        updates.status || null,
+        updates.txHash || null,
+        updates.sourceAddress || null,
+        updates.providerReference || null,
+        updates.failureReason || null,
+        updates.completedAt || null,
+        asJson(updates.metadata || {}),
+        updates.idempotencyKey || null,
+      ],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
   async countRecentWithdrawals(userId, hours = 24, db = { query }) {
     const { rows } = await db.query(
       `SELECT COUNT(*)::int AS count

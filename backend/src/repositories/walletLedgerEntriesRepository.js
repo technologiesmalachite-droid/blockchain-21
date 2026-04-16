@@ -59,4 +59,17 @@ export const walletLedgerEntriesRepository = {
 
     return toCamelRows(rows);
   },
+
+  async findByIdempotencyKey(idempotencyKey, db = { query }) {
+    const { rows } = await db.query(
+      `SELECT *
+       FROM wallet_ledger_entries
+       WHERE idempotency_key = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [idempotencyKey],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
 };

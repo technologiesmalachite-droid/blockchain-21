@@ -2,6 +2,23 @@ import { query } from "../db/pool.js";
 import { asJson, toCamelRows } from "./helpers.js";
 
 export const walletAddressesRepository = {
+  async findByAddress({ address, asset, network }, db = { query }) {
+    const { rows } = await db.query(
+      `SELECT *
+       FROM wallet_addresses
+       WHERE address = $1
+         AND asset = $2
+         AND network = $3
+       ORDER BY
+         CASE WHEN status = 'active' THEN 0 ELSE 1 END,
+         created_at DESC
+       LIMIT 1`,
+      [address, asset, network],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
   async findActive({ userId, asset, network, walletType }, db = { query }) {
     const { rows } = await db.query(
       `SELECT *

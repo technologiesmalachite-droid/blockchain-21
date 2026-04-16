@@ -92,7 +92,14 @@ app.use(
   }),
 );
 app.use(globalApiLimiter);
-app.use(express.json({ limit: "2mb" }));
+app.use(
+  express.json({
+    limit: "2mb",
+    verify: (req, _res, buffer) => {
+      req.rawBody = buffer?.length ? buffer.toString("utf8") : "";
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true }));
 app.use((error, _req, res, next) => {
   if (error?.type === "entity.parse.failed") {

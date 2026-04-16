@@ -16,12 +16,53 @@ import {
   submitDepositIntent,
   submitWithdrawalIntent,
 } from "../services/walletFundingService.js";
+import { processDepositWebhook } from "../services/walletDepositService.js";
 import { getWalletSummary, getWalletAssetDetail } from "../services/walletService.js";
 import { getWalletTransactionByHash, getWalletTransactionById, listWalletTransactions } from "../services/walletTransactionService.js";
 import { confirmWalletSwap, createWalletSwapQuote } from "../services/walletSwapService.js";
 import { notifyUser } from "../services/notificationService.js";
 
+const INFRASTRUCTURE_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EPIPE",
+  "57P01",
+  "57P02",
+  "57P03",
+  "53300",
+  "08000",
+  "08001",
+  "08003",
+  "08006",
+]);
+
+const isInfrastructureIssue = (error) => {
+  if (!error) {
+    return false;
+  }
+
+  const code = typeof error.code === "string" ? error.code : "";
+  if (INFRASTRUCTURE_ERROR_CODES.has(code)) {
+    return true;
+  }
+
+  const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
+  return (
+    message.includes("database") ||
+    message.includes("db") ||
+    message.includes("connection") ||
+    message.includes("connect") ||
+    message.includes("timeout") ||
+    message.includes("pool")
+  );
+};
+
 const resolveErrorStatus = (error, fallback = 400) => {
+  if (isInfrastructureIssue(error)) {
+    return 503;
+  }
+
   if (Number.isInteger(error?.statusCode)) {
     return error.statusCode;
   }
@@ -48,36 +89,49 @@ const resolveErrorStatus = (error, fallback = 400) => {
 
 const sendError = (res, error, fallbackMessage, fallbackStatus = 400) => {
   const status = resolveErrorStatus(error, fallbackStatus);
-  const message = typeof error?.message === "string" && error.message.trim() ? error.message : fallbackMessage;
+  const infraMessage = "Wallet infrastructure is temporarily unavailable. Please try again shortly.";
+  const message = isInfrastructureIssue(error)
+    ? infraMessage
+    : typeof error?.message === "string" && error.message.trim()
+      ? error.message
+      : fallbackMessage;
   return res.status(status).json({ message });
 };
 
 export const getBalances = async (req, res) => {
-  const { wallets, totalBalance } = await getWalletBalances(req.user.id);
+  try {
+    const { wallets, totalBalance } = await getWalletBalances(req.user.id);
 
-  const balances = wallets.map((wallet) => ({
-    asset: wallet.asset,
-    walletType: wallet.walletType,
-    balance: wallet.totalBalance,
-    available: wallet.availableBalance,
-    locked: wallet.lockedBalance,
-    availableBalance: wallet.availableBalance,
-    lockedBalance: wallet.lockedBalance,
-    available_balance: wallet.availableBalance,
-    locked_balance: wallet.lockedBalance,
-    averageCost: wallet.averageCost,
-  }));
+    const balances = wallets.map((wallet) => ({
+      asset: wallet.asset,
+      walletType: wallet.walletType,
+      balance: wallet.totalBalance,
+      available: wallet.availableBalance,
+      locked: wallet.lockedBalance,
+      availableBalance: wallet.availableBalance,
+      lockedBalance: wallet.lockedBalance,
+      available_balance: wallet.availableBalance,
+      locked_balance: wallet.lockedBalance,
+      averageCost: wallet.averageCost,
+    }));
 
-  return res.json({
-    wallets,
-    balances,
-    totalBalance,
-  });
+    return res.json({
+      wallets,
+      balances,
+      totalBalance,
+    });
+  } catch (error) {
+    return sendError(res, error, "Unable to fetch wallet balances.", 503);
+  }
 };
 
 export const getWalletSummaryController = async (req, res) => {
-  const summary = await getWalletSummary(req.user.id);
-  return res.json(summary);
+  try {
+    const summary = await getWalletSummary(req.user.id);
+    return res.json(summary);
+  } catch (error) {
+    return sendError(res, error, "Unable to fetch wallet summary.", 503);
+  }
 };
 
 export const getWallets = async (req, res) => {
@@ -175,6 +229,20 @@ export const getDepositAddressBook = async (req, res) => {
   }
 };
 
+export const processDepositWebhookController = async (req, res) => {
+  try {
+    const result = await processDepositWebhook({
+      headers: req.headers,
+      rawBody: req.rawBody,
+      payload: req.validated.body,
+    });
+
+    return res.status(result.ignored ? 202 : 200).json(result);
+  } catch (error) {
+    return sendError(res, error, "Unable to process deposit webhook.", 400);
+  }
+};
+
 export const createDepositRequest = async (req, res) => {
   try {
     const record = await submitDepositIntent({
@@ -249,12 +317,16 @@ export const createWithdrawRequest = async (req, res) => {
 };
 
 export const getWalletHistory = async (req, res) => {
-  const payload = await listWalletTransactions({
-    userId: req.user.id,
-    filters: req.validated.query,
-  });
+  try {
+    const payload = await listWalletTransactions({
+      userId: req.user.id,
+      filters: req.validated.query,
+    });
 
-  return res.json(payload);
+    return res.json(payload);
+  } catch (error) {
+    return sendError(res, error, "Unable to fetch wallet transactions.", 503);
+  }
 };
 
 export const getWalletTransactionByIdController = async (req, res) => {

@@ -10,9 +10,14 @@ export const validate = (schema) => (req, res, next) => {
       path: issue.path.join("."),
       message: issue.message,
     }));
+    const primaryMessage = issues[0]?.message || "Invalid request data.";
+
+    if (process.env.NODE_ENV !== "production" && req.originalUrl.includes("/auth/register")) {
+      console.log("register validation error:", result.error);
+    }
 
     return res.status(400).json({
-      message: "Invalid request data.",
+      message: primaryMessage,
       code: "validation_error",
       issues,
     });

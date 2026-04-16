@@ -18,13 +18,6 @@ export type RegisterPayload = {
   privacyAccepted: boolean;
 };
 
-export type FirebaseSessionPayload = {
-  idToken: string;
-  countryCode?: string;
-  termsAccepted?: boolean;
-  privacyAccepted?: boolean;
-};
-
 export type TwoFactorLoginChallenge = {
   requiresTwoFactor: true;
   loginToken: string;
@@ -79,12 +72,6 @@ export const verifyEmailOtpLoginRequest = (payload: { email: string; otp: string
 
 export const registerRequest = (payload: RegisterPayload) =>
   apiRequest<AuthSession>("/auth/register", {
-    method: "POST",
-    body: payload,
-  });
-
-export const firebaseSessionRequest = (payload: FirebaseSessionPayload) =>
-  apiRequest<AuthStepResult>("/auth/firebase/session", {
     method: "POST",
     body: payload,
   });

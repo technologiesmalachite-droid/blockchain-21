@@ -25,6 +25,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils";
 type WalletPageState = {
   loading: boolean;
   failed: boolean;
+  errorMessage: string;
   summary: WalletSummary | null;
   history: WalletHistoryItem[];
   pagination: WalletTransactionsResponse["pagination"];
@@ -33,6 +34,7 @@ type WalletPageState = {
 const initialState: WalletPageState = {
   loading: false,
   failed: false,
+  errorMessage: "",
   summary: null,
   history: [],
   pagination: {
@@ -95,6 +97,7 @@ export default function WalletPage() {
     setState({
       loading: false,
       failed: false,
+      errorMessage: "",
       summary: summaryPayload,
       history: historyPayload.items || [],
       pagination: historyPayload.pagination,
@@ -138,14 +141,18 @@ export default function WalletPage() {
           }
         }
       })
-      .catch(() => {
+      .catch((error) => {
         if (!active) {
           return;
         }
 
+        const message = error instanceof Error && error.message
+          ? error.message
+          : "Wallet infrastructure is temporarily unavailable. Please try again shortly.";
         setState({
           ...initialState,
           failed: true,
+          errorMessage: message,
         });
       });
 
@@ -260,7 +267,7 @@ export default function WalletPage() {
           ) : state.failed ? (
             <Card className="border-white/15 bg-black/25">
               <p className="text-xl font-semibold text-white">Wallet data unavailable</p>
-              <p className="mt-2 text-sm text-muted">Please refresh the page or sign in again.</p>
+              <p className="mt-2 text-sm text-muted">{state.errorMessage || "Please refresh the page or sign in again."}</p>
             </Card>
           ) : (
             <>

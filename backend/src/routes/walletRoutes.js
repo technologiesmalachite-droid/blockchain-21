@@ -7,6 +7,7 @@ import {
   createWalletSellIntentController,
   createDepositRequest,
   estimateWithdrawalFeeController,
+  processDepositWebhookController,
   createWallet,
   createWithdrawRequest,
   getDepositAddressBook,
@@ -37,6 +38,7 @@ import {
   walletHistoryQuerySchema,
   walletSwapConfirmSchema,
   walletSwapQuoteSchema,
+  walletDepositWebhookSchema,
   walletTransactionHashSchema,
   walletTransactionIdSchema,
   walletWithdrawEstimateSchema,
@@ -50,6 +52,7 @@ import { walletActionLimiter, walletSwapLimiter, walletWithdrawalLimiter } from 
 
 const router = Router();
 
+router.post("/webhooks/deposit", validate(walletDepositWebhookSchema), asyncHandler(processDepositWebhookController));
 router.get("/balances", requireAuth, requireActiveAccount, requireConsents, asyncHandler(getBalances));
 router.get("/summary", requireAuth, requireActiveAccount, requireConsents, asyncHandler(getWalletSummaryController));
 router.get("/wallets", requireAuth, requireActiveAccount, requireConsents, asyncHandler(getWallets));
