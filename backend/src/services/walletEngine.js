@@ -21,6 +21,7 @@ import {
   validateWalletAddress,
 } from "./walletCatalogService.js";
 import { getOrCreateDepositAddress } from "./walletAddressService.js";
+import { ensureUserWalletFoundation } from "./walletFoundationService.js";
 
 const roundAmount = (value, precision = 10) => toNumber(value, precision);
 
@@ -431,6 +432,8 @@ export const transferBetweenWallets = async ({ user, asset, amount, fromWalletTy
 };
 
 export const getWalletBalances = async (userId) => {
+  await ensureUserWalletFoundation(userId);
+
   const wallets = (await walletsRepository.findByUser(userId)).map(mapWallet);
   const totalBalance = wallets.reduce((sum, item) => sum + item.availableBalance * (item.averageCost || 1), 0);
 

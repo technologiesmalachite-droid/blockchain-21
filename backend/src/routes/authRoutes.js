@@ -2,6 +2,8 @@ import { Router } from "express";
 import {
   changePassword,
   disableTwoFactor,
+  emailOtpSend,
+  emailOtpVerify,
   firebaseSession,
   forgotPassword,
   getSessionHistory,
@@ -23,6 +25,8 @@ import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import {
   changePasswordSchema,
+  emailOtpSendSchema,
+  emailOtpVerifySchema,
   firebaseSessionSchema,
   forgotPasswordSchema,
   loginSchema,
@@ -38,13 +42,46 @@ import {
   twoFactorVerifyEnableSchema,
   verifyContactSchema,
 } from "../models/schemas.js";
-import { authAttemptLimiter, twoFactorActionLimiter, twoFactorVerifyLimiter } from "../middleware/rateLimits.js";
+import {
+  authAttemptLimiter,
+  authEmailOtpSendLimiter,
+  authEmailOtpVerifyLimiter,
+  twoFactorActionLimiter,
+  twoFactorVerifyLimiter,
+} from "../middleware/rateLimits.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = Router();
+const basicEmailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const ensureEmailOtpSendInput = (req, res, next) => {
+  const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log("otp_send_input_email:", email);
+  }
+
+  if (!email) {
+    return res.status(400).json({
+      error: "Email is required",
+      message: "Email is required",
+    });
+  }
+
+  if (!basicEmailPattern.test(email)) {
+    return res.status(400).json({
+      error: "Valid email is required",
+      message: "Valid email is required",
+    });
+  }
+
+  return next();
+};
 
 router.post("/register", authAttemptLimiter, validate(registerSchema), asyncHandler(register));
 router.post("/login", authAttemptLimiter, validate(loginSchema), asyncHandler(login));
+router.post("/email-otp/send", authEmailOtpSendLimiter, ensureEmailOtpSendInput, validate(emailOtpSendSchema), asyncHandler(emailOtpSend));
+router.post("/email-otp/verify", authEmailOtpVerifyLimiter, validate(emailOtpVerifySchema), asyncHandler(emailOtpVerify));
 router.post("/forgot-password", authAttemptLimiter, validate(forgotPasswordSchema), asyncHandler(forgotPassword));
 router.post("/reset-password", authAttemptLimiter, validate(resetPasswordSchema), asyncHandler(resetPassword));
 router.post("/2fa/login-verify", twoFactorVerifyLimiter, validate(twoFactorLoginVerifySchema), asyncHandler(verifyTwoFactorLogin));

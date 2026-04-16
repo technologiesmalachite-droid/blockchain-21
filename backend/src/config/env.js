@@ -5,6 +5,8 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Prefer backend/.env for local backend runs, then fall back to root .env and process env.
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 dotenv.config();
 
@@ -70,6 +72,32 @@ const parseNullablePositiveNumber = (value) => {
   return parsed;
 };
 
+const parseSameSite = (value, fallback = "lax") => {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "lax" || normalized === "strict" || normalized === "none") {
+    return normalized;
+  }
+
+  return fallback;
+};
+
+const parseAuthEmailProvider = (value) => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "resend") {
+    return "resend";
+  }
+
+  if (!normalized) {
+    return "resend";
+  }
+
+  throw new Error("AUTH_EMAIL_PROVIDER must be set to 'resend'.");
+};
+
 const configuredClientUrls = mergeUnique(
   parseOrigins(process.env.CLIENT_URLS),
   parseOrigins(process.env.FRONTEND_URLS),
@@ -113,6 +141,48 @@ const kycAllowedMimeTypes = parseCsv(process.env.KYC_ALLOWED_MIME_TYPES, [
   "image/webp",
   "application/pdf",
 ]);
+const authEmailProvider = parseAuthEmailProvider(process.env.AUTH_EMAIL_PROVIDER || process.env.AUTH_EMAIL_OTP_PROVIDER || "resend");
+const authEmailOtpResendApiKey = process.env.RESEND_API_KEY || "";
+const authEmailOtpFromEmail = process.env.AUTH_EMAIL_OTP_FROM_EMAIL || process.env.EMAIL_FROM || "";
+const authEmailOtpFromName = process.env.AUTH_EMAIL_OTP_FROM_NAME || "MalachiteX Security";
+const maskApiKey = (value) => {
+  const key = String(value || "").trim();
+  if (!key) {
+    return "missing";
+  }
+  if (key.length <= 8) {
+    return `${key.slice(0, 2)}***`;
+  }
+  return `${key.slice(0, 4)}***${key.slice(-4)}`;
+};
+
+console.info(
+  JSON.stringify({
+    level: "info",
+    event: "auth_email_provider_config",
+    provider: authEmailProvider,
+    resendApiKey: maskApiKey(authEmailOtpResendApiKey),
+    hasEmailFrom: Boolean(authEmailOtpFromEmail),
+  }),
+);
+
+if (nodeEnv === "production") {
+  if (!authEmailOtpResendApiKey) {
+    throw new Error("RESEND_API_KEY is required for email OTP delivery.");
+  }
+
+  if (!authEmailOtpFromEmail) {
+    throw new Error("EMAIL_FROM (or AUTH_EMAIL_OTP_FROM_EMAIL) is required for email OTP delivery.");
+  }
+} else {
+  if (!authEmailOtpResendApiKey) {
+    configurationWarnings.push("RESEND_API_KEY is not set. Email OTP delivery may fail; use debug OTP fallback for local testing.");
+  }
+
+  if (!authEmailOtpFromEmail) {
+    configurationWarnings.push("EMAIL_FROM is not set. Email OTP delivery may fail; use debug OTP fallback for local testing.");
+  }
+}
 
 const assertProductionSecret = (name, value, minLength) => {
   if (nodeEnv !== "production") {
@@ -135,6 +205,16 @@ if (nodeEnv === "production" && !databaseUrl) {
   configurationWarnings.push("DATABASE_URL is not configured for production.");
 }
 
+if (nodeEnv === "production" && authEmailProvider === "resend") {
+  if (!authEmailOtpResendApiKey) {
+    configurationWarnings.push("RESEND_API_KEY is not configured for production.");
+  }
+
+  if (!authEmailOtpFromEmail) {
+    configurationWarnings.push("EMAIL_FROM (or AUTH_EMAIL_OTP_FROM_EMAIL) is not configured for production.");
+  }
+}
+
 assertProductionSecret("JWT_SECRET", jwtSecret, 32);
 assertProductionSecret("JWT_REFRESH_SECRET", jwtRefreshSecret, 32);
 assertProductionSecret("ENCRYPTION_KEY", encryptionKey, 24);
@@ -150,6 +230,9 @@ export const env = {
   databaseUrl,
   dbSslMode,
   dbSslRejectUnauthorized,
+  authCookieDomain: process.env.AUTH_COOKIE_DOMAIN || undefined,
+  authCookieSecure: parseBoolean(process.env.AUTH_COOKIE_SECURE, nodeEnv === "production"),
+  authCookieSameSite: parseSameSite(process.env.AUTH_COOKIE_SAMESITE, nodeEnv === "production" ? "none" : "lax"),
   redisUrl: process.env.REDIS_URL || "",
   objectStorageBucket: process.env.OBJECT_STORAGE_BUCKET || "",
   identityProviderUrl: process.env.IDENTITY_PROVIDER_URL || "",
@@ -179,6 +262,18 @@ export const env = {
   twoFactorLoginTokenTtlSeconds: parsePositiveNumber(process.env.AUTH_2FA_LOGIN_TOKEN_TTL_SECONDS, 300),
   twoFactorTotpWindow: parsePositiveNumber(process.env.AUTH_2FA_TOTP_WINDOW, 1),
   twoFactorTotpIssuer: process.env.AUTH_2FA_ISSUER || "MalachiteX",
+  authEmailOtpExpiryMinutes: parsePositiveNumber(process.env.AUTH_EMAIL_OTP_EXPIRY_MINUTES, 5),
+  authEmailOtpMaxAttempts: parsePositiveNumber(process.env.AUTH_EMAIL_OTP_MAX_ATTEMPTS, 5),
+  authEmailOtpCooldownSeconds: parsePositiveNumber(process.env.AUTH_EMAIL_OTP_COOLDOWN_SECONDS, 60),
+  authEmailOtpRateLimitWindowMs: parsePositiveNumber(process.env.AUTH_EMAIL_OTP_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
+  authEmailOtpSendRateLimitMax: parsePositiveNumber(process.env.AUTH_EMAIL_OTP_SEND_RATE_LIMIT_MAX, 8),
+  authEmailOtpVerifyRateLimitMax: parsePositiveNumber(process.env.AUTH_EMAIL_OTP_VERIFY_RATE_LIMIT_MAX, 20),
+  authEmailProvider,
+  authEmailOtpResendApiKey,
+  authEmailOtpFromEmail,
+  authEmailOtpFromName,
+  authEmailOtpDebugLogCode: parseBoolean(process.env.AUTH_EMAIL_OTP_DEBUG_LOG_CODE, false),
+  authEmailOtpSendTimeoutMs: parsePositiveNumber(process.env.AUTH_EMAIL_OTP_SEND_TIMEOUT_MS, 10000),
   authPasswordResetTokenTtlMinutes: parsePositiveNumber(process.env.AUTH_PASSWORD_RESET_TOKEN_TTL_MINUTES, 20),
   authTwoFactorRecoveryCodeCount: parsePositiveNumber(process.env.AUTH_2FA_RECOVERY_CODE_COUNT, 8),
   notificationsDefaultPageSize: parsePositiveNumber(process.env.NOTIFICATIONS_DEFAULT_PAGE_SIZE, 20),

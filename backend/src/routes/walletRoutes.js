@@ -57,7 +57,9 @@ router.get("/assets/:asset", requireAuth, requireActiveAccount, requireConsents,
 router.post("/wallets", requireAuth, requireActiveAccount, requireConsents, validate(walletCreateSchema), asyncHandler(createWallet));
 router.post("/transfer", requireAuth, requireActiveAccount, requireConsents, walletActionLimiter, validate(walletTransferSchema), asyncHandler(transferWalletFunds));
 router.get("/deposit-addresses", requireAuth, requireActiveAccount, requireConsents, validate(walletAddressBookQuerySchema), asyncHandler(getDepositAddressBook));
-router.post("/deposit-address", requireAuth, requireActiveAccount, requireConsents, requireVerifiedContact, walletActionLimiter, validate(depositAddressSchema), asyncHandler(generateDepositAddress));
+router.post("/deposit-address", requireAuth, requireActiveAccount, requireConsents, walletActionLimiter, validate(depositAddressSchema), asyncHandler(generateDepositAddress));
+router.get("/addresses", requireAuth, requireActiveAccount, requireConsents, validate(walletAddressBookQuerySchema), asyncHandler(getDepositAddressBook));
+router.post("/address/generate", requireAuth, requireActiveAccount, requireConsents, walletActionLimiter, validate(depositAddressSchema), asyncHandler(generateDepositAddress));
 router.post("/deposit-request", requireAuth, requireActiveAccount, requireConsents, requireVerifiedContact, validate(walletRequestSchema), asyncHandler(createDepositRequest));
 router.post(
   "/withdraw-request",

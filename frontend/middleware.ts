@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { sanitizePostAuthPath } from "./lib/auth/navigation";
 
 const AUTH_COOKIE_NAME = "mx_access_token";
+const AUTH_REFRESH_COOKIE_NAME = "mx_refresh_token_present";
 const AUTH_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password"];
 
 const PRIVATE_PREFIXES = [
@@ -26,8 +27,11 @@ const isAuthPath = (pathname: string) => AUTH_PATHS.some((path) => pathname === 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const accessToken = request.cookies.get(AUTH_COOKIE_NAME)?.value;
+  const refreshTokenMarker = request.cookies.get(AUTH_REFRESH_COOKIE_NAME)?.value;
+  const hasAccessSession = Boolean(accessToken);
+  const hasFullAuthSession = Boolean(accessToken && refreshTokenMarker);
 
-  if (isAuthPath(pathname) && accessToken) {
+  if (isAuthPath(pathname) && hasAccessSession) {
     const safeDestination = sanitizePostAuthPath(request.nextUrl.searchParams.get("next"), "/wallet");
     return NextResponse.redirect(new URL(safeDestination, request.url));
   }
@@ -36,7 +40,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (accessToken) {
+  if (hasAccessSession || hasFullAuthSession) {
     return NextResponse.next();
   }
 

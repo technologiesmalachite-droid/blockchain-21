@@ -32,6 +32,9 @@ export type TwoFactorLoginChallenge = {
 };
 
 export type AuthStepResult = AuthSession | TwoFactorLoginChallenge;
+export type EmailOtpSendResponse = {
+  message: string;
+};
 
 export type TwoFactorSetupResponse = {
   message: string;
@@ -62,6 +65,18 @@ export const verifyTwoFactorLoginRequest = (payload: { loginToken: string; code:
     body: payload,
   });
 
+export const sendEmailOtpLoginRequest = (payload: { email: string }) =>
+  apiRequest<EmailOtpSendResponse>("/auth/email-otp/send", {
+    method: "POST",
+    body: payload,
+  });
+
+export const verifyEmailOtpLoginRequest = (payload: { email: string; otp: string }) =>
+  apiRequest<AuthStepResult>("/auth/email-otp/verify", {
+    method: "POST",
+    body: payload,
+  });
+
 export const registerRequest = (payload: RegisterPayload) =>
   apiRequest<AuthSession>("/auth/register", {
     method: "POST",
@@ -74,10 +89,10 @@ export const firebaseSessionRequest = (payload: FirebaseSessionPayload) =>
     body: payload,
   });
 
-export const logoutRequest = (refreshToken: string) =>
+export const logoutRequest = (refreshToken?: string) =>
   apiRequest<{ message: string }>("/auth/logout", {
     method: "POST",
-    body: { refreshToken },
+    body: refreshToken ? { refreshToken } : {},
   });
 
 export const getProfileRequest = () =>

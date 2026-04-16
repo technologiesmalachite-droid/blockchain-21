@@ -22,6 +22,25 @@ const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
+const getDatabaseTarget = () => {
+  if (!env.databaseUrl) {
+    return { configured: false };
+  }
+
+  try {
+    const parsed = new URL(env.databaseUrl);
+    return {
+      configured: true,
+      host: parsed.hostname || null,
+      port: parsed.port || "5432",
+      database: (parsed.pathname || "").replace(/^\//, "") || null,
+      sslMode: env.dbSslMode,
+    };
+  } catch {
+    return { configured: true, parseError: true, sslMode: env.dbSslMode };
+  }
+};
+
 app.get("/api/health", (req, res) => {
   console.info(`[health] ${new Date().toISOString()} ${req.method} ${req.originalUrl}`);
   res.status(200).json({ ok: true });
@@ -110,6 +129,8 @@ const logStartupDiagnostics = async () => {
     console.warn("Configuration warnings detected:", env.configurationWarnings);
   }
 
+  console.info("Startup DB target:", getDatabaseTarget());
+
   try {
     await query("SELECT 1");
     console.info("Startup check: database connectivity confirmed.");
@@ -118,6 +139,11 @@ const logStartupDiagnostics = async () => {
       code: error?.code ?? null,
       message: typeof error?.message === "string" ? error.message : "Unknown database error.",
     });
+
+    if (env.nodeEnv === "production") {
+      console.error("Production startup aborted: database connection is required.");
+      process.exit(1);
+    }
   }
 };
 

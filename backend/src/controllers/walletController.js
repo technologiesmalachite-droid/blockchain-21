@@ -61,6 +61,10 @@ export const getBalances = async (req, res) => {
     balance: wallet.totalBalance,
     available: wallet.availableBalance,
     locked: wallet.lockedBalance,
+    availableBalance: wallet.availableBalance,
+    lockedBalance: wallet.lockedBalance,
+    available_balance: wallet.availableBalance,
+    locked_balance: wallet.lockedBalance,
     averageCost: wallet.averageCost,
   }));
 

@@ -24,12 +24,13 @@ export function Header() {
   const [open, setOpen] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const { submitToast } = useDemo();
-  const { isAuthenticated, signOut, user, status } = useAuth();
+  const { authState, signOut, user } = useAuth();
+  const isAuthenticated = authState === "authenticated";
 
   useEffect(() => {
     let active = true;
 
-    if (status !== "authenticated") {
+    if (!isAuthenticated) {
       setUnreadNotifications(0);
       return () => {
         active = false;
@@ -58,7 +59,7 @@ export function Header() {
       active = false;
       window.clearInterval(interval);
     };
-  }, [status]);
+  }, [isAuthenticated]);
 
   const handleSignOut = async () => {
     await signOut();

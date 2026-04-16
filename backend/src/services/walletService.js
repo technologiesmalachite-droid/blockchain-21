@@ -10,6 +10,7 @@ import {
   listSupportedWalletAssets,
   normalizeAssetCode,
 } from "./walletCatalogService.js";
+import { ensureUserWalletFoundation } from "./walletFoundationService.js";
 
 const roundAmount = (value, precision = 10) => toNumber(value, precision);
 
@@ -44,6 +45,8 @@ const resolveAssetUsdPrice = (asset, marketMap) => {
 };
 
 export const getWalletSummary = async (userId) => {
+  await ensureUserWalletFoundation(userId);
+
   const [walletRows, marketRows, dbAssets] = await Promise.all([
     walletsRepository.findByUser(userId),
     marketsRepository.list(),
@@ -97,6 +100,8 @@ export const getWalletSummary = async (userId) => {
 };
 
 export const getWalletAssetDetail = async ({ userId, asset, walletType }) => {
+  await ensureUserWalletFoundation(userId);
+
   const { asset: assetCode } = assertSupportedAsset(asset);
   const [wallets, addresses, history] = await Promise.all([
     walletsRepository.findByUser(userId),

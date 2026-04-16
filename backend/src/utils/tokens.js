@@ -22,12 +22,12 @@ const assertTokenSecret = (secret, name) => {
 
 export const signAccessToken = (user) => {
   assertTokenSecret(env.jwtSecret, "JWT_SECRET");
-  return jwt.sign({ sub: user.id, role: user.role, email: user.email }, env.jwtSecret, { expiresIn: "15m" });
+  return jwt.sign({ sub: user.id, role: user.role, email: user.email, purpose: "access" }, env.jwtSecret, { expiresIn: "15m" });
 };
 
 export const signRefreshToken = (user) => {
   assertTokenSecret(env.jwtRefreshSecret, "JWT_REFRESH_SECRET");
-  return jwt.sign({ sub: user.id, role: user.role }, env.jwtRefreshSecret, { expiresIn: "7d" });
+  return jwt.sign({ sub: user.id, role: user.role, purpose: "refresh" }, env.jwtRefreshSecret, { expiresIn: "7d" });
 };
 
 export const signTwoFactorLoginToken = (user) => {
@@ -44,8 +44,29 @@ export const signTwoFactorLoginToken = (user) => {
   );
 };
 
-export const verifyAccessToken = (token) => jwt.verify(token, env.jwtSecret);
-export const verifyRefreshToken = (token) => jwt.verify(token, env.jwtRefreshSecret);
+export const verifyAccessToken = (token) => {
+  const decoded = jwt.verify(token, env.jwtSecret);
+
+  if (decoded?.purpose && decoded.purpose !== "access") {
+    const error = new Error("Invalid access token purpose.");
+    error.code = "INVALID_ACCESS_TOKEN_PURPOSE";
+    throw error;
+  }
+
+  return decoded;
+};
+
+export const verifyRefreshToken = (token) => {
+  const decoded = jwt.verify(token, env.jwtRefreshSecret);
+
+  if (decoded?.purpose && decoded.purpose !== "refresh") {
+    const error = new Error("Invalid refresh token purpose.");
+    error.code = "INVALID_REFRESH_TOKEN_PURPOSE";
+    throw error;
+  }
+
+  return decoded;
+};
 export const verifyTwoFactorLoginToken = (token) => {
   const decoded = jwt.verify(token, env.jwtSecret);
 

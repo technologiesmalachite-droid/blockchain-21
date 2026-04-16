@@ -8,6 +8,10 @@ const jsonRateLimitHandler = (message) => (_req, res) =>
   });
 
 const userAwareKeyGenerator = (req, _res) => req.user?.id || req.ip;
+const emailAndIpKeyGenerator = (req, _res) => {
+  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  return `${req.ip}:${email || "unknown"}`;
+};
 
 export const globalApiLimiter = rateLimit({
   windowMs: env.rateLimitWindowMs,
@@ -42,6 +46,26 @@ export const otpVerifyLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
   handler: jsonRateLimitHandler("Too many OTP verification attempts. Please try again later."),
+});
+
+export const authEmailOtpSendLimiter = rateLimit({
+  windowMs: env.authEmailOtpRateLimitWindowMs,
+  limit: env.authEmailOtpSendRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: emailAndIpKeyGenerator,
+  handler: jsonRateLimitHandler("Too many OTP requests. Please try again later."),
+});
+
+export const authEmailOtpVerifyLimiter = rateLimit({
+  windowMs: env.authEmailOtpRateLimitWindowMs,
+  limit: env.authEmailOtpVerifyRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: emailAndIpKeyGenerator,
+  handler: jsonRateLimitHandler("Too many attempts, try again later."),
 });
 
 export const twoFactorActionLimiter = rateLimit({

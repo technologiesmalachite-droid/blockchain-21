@@ -45,20 +45,72 @@ export type AuthSession = {
 
 export const AUTH_SESSION_STORAGE_KEY = "malachitex.auth.session.v1";
 export const AUTH_COOKIE_NAME = "mx_access_token";
+export const AUTH_REFRESH_COOKIE_NAME = "mx_refresh_token_present";
 export const SESSION_CHANGED_EVENT = "malachitex:auth-session-changed";
 export const AUTH_REQUIRED_EVENT = "malachitex:auth-required";
 
-const ACCESS_COOKIE_TTL_SECONDS = 60 * 60 * 24 * 7;
+const ACCESS_COOKIE_FALLBACK_TTL_SECONDS = 60 * 15;
+const REFRESH_COOKIE_FALLBACK_TTL_SECONDS = 60 * 60 * 24 * 7;
+let memorySession: AuthSession | null = null;
+let tokenCache: Partial<AuthTokens> = {};
 
 const isBrowser = () => typeof window !== "undefined";
 
-const writeAccessCookie = (token: string) => {
+const decodeJwtExpiryMs = (token: string): number | null => {
+  if (!token || !token.includes(".")) {
+    return null;
+  }
+
+  const [, payloadBase64] = token.split(".");
+  if (!payloadBase64) {
+    return null;
+  }
+
+  try {
+    const base64 = payloadBase64.replace(/-/g, "+").replace(/_/g, "/");
+    const normalized = `${base64}${"=".repeat((4 - (base64.length % 4)) % 4)}`;
+    const payload = JSON.parse(atob(normalized)) as { exp?: number };
+    if (!payload?.exp || !Number.isFinite(payload.exp)) {
+      return null;
+    }
+
+    return payload.exp * 1000;
+  } catch {
+    return null;
+  }
+};
+
+const resolveCookieMaxAgeSeconds = (token: string, fallbackSeconds: number) => {
+  const expiryMs = decodeJwtExpiryMs(token);
+  if (!expiryMs) {
+    return fallbackSeconds;
+  }
+
+  const remainingSeconds = Math.ceil((expiryMs - Date.now()) / 1000);
+  if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) {
+    return 0;
+  }
+
+  return Math.max(1, remainingSeconds);
+};
+
+const writeCookie = (name: string, value: string, maxAgeSeconds: number) => {
   if (!isBrowser()) {
     return;
   }
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${ACCESS_COOKIE_TTL_SECONDS}; SameSite=Lax${secure}`;
+  document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax${secure}`;
+};
+
+const writeAccessCookie = (token: string) => {
+  const maxAgeSeconds = resolveCookieMaxAgeSeconds(token, ACCESS_COOKIE_FALLBACK_TTL_SECONDS);
+  writeCookie(AUTH_COOKIE_NAME, token, maxAgeSeconds);
+};
+
+const writeRefreshMarkerCookie = (refreshToken: string) => {
+  const maxAgeSeconds = resolveCookieMaxAgeSeconds(refreshToken, REFRESH_COOKIE_FALLBACK_TTL_SECONDS);
+  writeCookie(AUTH_REFRESH_COOKIE_NAME, "1", maxAgeSeconds);
 };
 
 const clearAccessCookie = () => {
@@ -68,6 +120,7 @@ const clearAccessCookie = () => {
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   document.cookie = `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  document.cookie = `${AUTH_REFRESH_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
 };
 
 const readCookieValue = (name: string) => {
@@ -176,7 +229,7 @@ export const emitAuthRequired = (message = "Authentication required. Please sign
 
 export const readSession = (): AuthSession | null => {
   if (!isBrowser()) {
-    return null;
+    return memorySession;
   }
 
   let raw: string | null = null;
@@ -184,10 +237,11 @@ export const readSession = (): AuthSession | null => {
   try {
     raw = window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY);
   } catch {
-    return null;
+    return memorySession;
   }
 
   if (!raw) {
+    memorySession = null;
     return null;
   }
 
@@ -201,6 +255,7 @@ export const readSession = (): AuthSession | null => {
       } catch {
         // Ignore localStorage cleanup failures.
       }
+      memorySession = null;
       return null;
     }
 
@@ -208,7 +263,15 @@ export const readSession = (): AuthSession | null => {
       window.localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(normalized));
     }
 
+    memorySession = normalized;
+    tokenCache = {
+      accessToken: normalized.tokens.accessToken,
+      refreshToken: normalized.tokens.refreshToken,
+    };
     writeAccessCookie(normalized.tokens.accessToken);
+    if (normalized.tokens.refreshToken) {
+      writeRefreshMarkerCookie(normalized.tokens.refreshToken);
+    }
     return normalized;
   } catch {
     try {
@@ -216,12 +279,18 @@ export const readSession = (): AuthSession | null => {
     } catch {
       // Ignore localStorage cleanup failures.
     }
+    memorySession = null;
     return null;
   }
 };
 
 export const saveSession = (session: AuthSession) => {
   if (!isBrowser()) {
+    memorySession = session;
+    tokenCache = {
+      accessToken: session.tokens.accessToken,
+      refreshToken: session.tokens.refreshToken,
+    };
     return;
   }
 
@@ -232,12 +301,31 @@ export const saveSession = (session: AuthSession) => {
     return;
   }
 
+  memorySession = normalized;
+  tokenCache = {
+    accessToken: normalized.tokens.accessToken,
+    refreshToken: normalized.tokens.refreshToken,
+  };
   window.localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(normalized));
   writeAccessCookie(normalized.tokens.accessToken);
+  if (normalized.tokens.refreshToken) {
+    writeRefreshMarkerCookie(normalized.tokens.refreshToken);
+  }
   emitSessionChanged(normalized);
 };
 
 export const updateAccessToken = (accessToken: string): AuthSession | null => {
+  const normalizedToken = asString(accessToken);
+  if (!normalizedToken) {
+    return null;
+  }
+
+  tokenCache = {
+    ...tokenCache,
+    accessToken: normalizedToken,
+  };
+  writeAccessCookie(normalizedToken);
+
   const current = readSession();
 
   if (!current) {
@@ -257,6 +345,9 @@ export const updateAccessToken = (accessToken: string): AuthSession | null => {
 };
 
 export const clearSession = () => {
+  memorySession = null;
+  tokenCache = {};
+
   if (!isBrowser()) {
     return;
   }
@@ -270,6 +361,52 @@ export const clearSession = () => {
   emitSessionChanged(null);
 };
 
-export const getAccessToken = () => readSession()?.tokens.accessToken ?? null;
-export const getRefreshToken = () => readSession()?.tokens.refreshToken ?? null;
+export const updateRefreshToken = (refreshToken: string): AuthSession | null => {
+  const normalizedToken = asString(refreshToken);
+  if (!normalizedToken) {
+    return null;
+  }
+
+  tokenCache = {
+    ...tokenCache,
+    refreshToken: normalizedToken,
+  };
+  writeRefreshMarkerCookie(normalizedToken);
+
+  const current = readSession();
+  if (!current) {
+    return null;
+  }
+
+  const nextSession: AuthSession = {
+    ...current,
+    tokens: {
+      ...current.tokens,
+      refreshToken: normalizedToken,
+    },
+  };
+
+  saveSession(nextSession);
+  return nextSession;
+};
+
+export const getAccessToken = () => {
+  const cached = asString(tokenCache.accessToken);
+  if (cached) {
+    return cached;
+  }
+
+  return readSession()?.tokens.accessToken ?? null;
+};
+
+export const getRefreshToken = () => {
+  const cached = asString(tokenCache.refreshToken);
+  if (cached) {
+    return cached;
+  }
+
+  return readSession()?.tokens.refreshToken ?? null;
+};
+
 export const hasAccessTokenCookie = () => Boolean(readAccessTokenCookie());
+export const hasRefreshTokenCookie = () => Boolean(readCookieValue(AUTH_REFRESH_COOKIE_NAME));

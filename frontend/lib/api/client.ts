@@ -1,6 +1,6 @@
 "use client";
 
-import { clearSession, emitAuthRequired, getAccessToken, getRefreshToken, updateAccessToken } from "@/lib/auth/session-store";
+import { clearSession, emitAuthRequired, getAccessToken, getRefreshToken, updateAccessToken, updateRefreshToken } from "@/lib/auth/session-store";
 
 type AuthMode = "none" | "required";
 
@@ -48,8 +48,12 @@ const buildUrl = (path: string) => {
 };
 
 const toPublicErrorMessage = (status: number) => {
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     return "Your session is not authorized. Please sign in again.";
+  }
+
+  if (status === 403) {
+    return "You do not have permission to perform this action.";
   }
 
   if (status >= 500) {
@@ -132,34 +136,34 @@ const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit = {}
 const refreshAccessToken = async (): Promise<string | null> => {
   const refreshToken = getRefreshToken();
 
-  if (!refreshToken) {
-    return null;
-  }
-
   if (!refreshPromise) {
     refreshPromise = (async () => {
       try {
+        const requestPayload = refreshToken ? { refreshToken } : {};
         const response = await fetchWithTimeout(buildUrl("/auth/refresh"), {
           method: "POST",
           credentials: "include",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ refreshToken }),
+          body: JSON.stringify(requestPayload),
         });
 
         if (!response.ok) {
           return null;
         }
 
-        const payload = await parseJson<{ accessToken: string }>(response);
+        const tokenPayload = await parseJson<{ accessToken?: string; refreshToken?: string }>(response);
 
-        if (!payload?.accessToken) {
+        if (!tokenPayload?.accessToken) {
           return null;
         }
 
-        updateAccessToken(payload.accessToken);
-        return payload.accessToken;
+        updateAccessToken(tokenPayload.accessToken);
+        if (tokenPayload.refreshToken) {
+          updateRefreshToken(tokenPayload.refreshToken);
+        }
+        return tokenPayload.accessToken;
       } catch {
         return null;
       } finally {
@@ -171,9 +175,37 @@ const refreshAccessToken = async (): Promise<string | null> => {
   return refreshPromise;
 };
 
-const handleAuthFailure = () => {
+const shouldDebugAuth = () =>
+  (() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+      return true;
+    }
+
+    try {
+      return window.localStorage.getItem("mx_debug_auth") === "1";
+    } catch {
+      return false;
+    }
+  })();
+
+const logAuthDebug = (event: string, payload: Record<string, unknown>) => {
+  if (!shouldDebugAuth()) {
+    return;
+  }
+
+  console.info(`[auth-client] ${event}`, payload);
+};
+
+const handleAuthFailure = (message?: string) => {
+  logAuthDebug("auth_failure", {
+    message: message || "Your session expired. Please sign in to continue.",
+  });
   clearSession();
-  emitAuthRequired("Your session expired. Please sign in to continue.");
+  emitAuthRequired(message || "Your session expired. Please sign in to continue.");
 };
 
 const requestOnce = async <T>(path: string, options: ApiRequestOptions, accessToken: string | null): Promise<Response> => {
@@ -198,15 +230,24 @@ const requestOnce = async <T>(path: string, options: ApiRequestOptions, accessTo
 export const apiRequest = async <T>(path: string, options: ApiRequestOptions = {}): Promise<T> => {
   const authMode = options.auth ?? "none";
   let accessToken = authMode === "required" ? getAccessToken() : null;
+  const isWalletPath = path.startsWith("/wallet");
+
+  if (authMode === "required") {
+    logAuthDebug("request_start", {
+      path,
+      isWalletPath,
+      hasAccessToken: Boolean(accessToken),
+    });
+  }
 
   if (authMode === "required" && !accessToken) {
     const refreshedToken = await refreshAccessToken();
     accessToken = refreshedToken || getAccessToken();
 
-    if (!accessToken) {
-      emitAuthRequired();
-      throw new ApiRequestError("Authentication required.", 401, "unauthorized");
-    }
+    logAuthDebug("request_token_restore", {
+      path,
+      restored: Boolean(accessToken),
+    });
   }
 
   let response: Response;
@@ -221,7 +262,7 @@ export const apiRequest = async <T>(path: string, options: ApiRequestOptions = {
     throw new ApiRequestError("Network request failed. Check your connection and retry.", 0, "network_error");
   }
 
-  if ((response.status === 401 || response.status === 403) && authMode === "required") {
+  if (response.status === 401 && authMode === "required") {
     const refreshedToken = await refreshAccessToken();
 
     if (refreshedToken) {
@@ -238,15 +279,30 @@ export const apiRequest = async <T>(path: string, options: ApiRequestOptions = {
     }
   }
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     const message = await getApiErrorMessage(response);
+    logAuthDebug("response_unauthorized", {
+      path,
+      status: response.status,
+      message,
+    });
 
     if (authMode === "required") {
-      handleAuthFailure();
-      throw new ApiRequestError(message || "Authentication required.", response.status, response.status === 403 ? "forbidden" : "unauthorized");
+      handleAuthFailure(message || "Your session expired. Please sign in to continue.");
+      throw new ApiRequestError(message || "Authentication required.", response.status, "unauthorized");
     }
 
-    throw new ApiRequestError(message || "You are not authorized to access this resource.", response.status, response.status === 403 ? "forbidden" : "unauthorized");
+    throw new ApiRequestError(message || "You are not authorized to access this resource.", response.status, "unauthorized");
+  }
+
+  if (response.status === 403) {
+    const message = await getApiErrorMessage(response);
+    logAuthDebug("response_forbidden", {
+      path,
+      status: response.status,
+      message,
+    });
+    throw new ApiRequestError(message || "You do not have permission to access this resource.", response.status, "forbidden");
   }
 
   if (!response.ok) {

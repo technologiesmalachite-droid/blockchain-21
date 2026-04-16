@@ -38,6 +38,34 @@ export const walletAddressesRepository = {
     return toCamelRows(rows);
   },
 
+  async listByUser({ userId, asset, walletType, limit = 50 }, db = { query }) {
+    const params = [userId];
+    const clauses = ["user_id = $1"];
+
+    if (asset) {
+      params.push(asset);
+      clauses.push(`asset = $${params.length}`);
+    }
+
+    if (walletType) {
+      params.push(walletType);
+      clauses.push(`wallet_type = $${params.length}`);
+    }
+
+    params.push(limit);
+
+    const { rows } = await db.query(
+      `SELECT *
+       FROM wallet_addresses
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY created_at DESC
+       LIMIT $${params.length}`,
+      params,
+    );
+
+    return toCamelRows(rows);
+  },
+
   async create(record, db = { query }) {
     const { rows } = await db.query(
       `INSERT INTO wallet_addresses (
@@ -45,7 +73,7 @@ export const walletAddressesRepository = {
         status, is_primary, provider_name, provider_reference, expires_at,
         idempotency_key, metadata
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)
-      ON CONFLICT (idempotency_key)
+      ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL
       DO UPDATE SET
         updated_at = NOW(),
         status = EXCLUDED.status,

@@ -504,14 +504,14 @@ export const transferWalletFunds = (payload: {
   });
 
 export const requestDepositAddress = (payload: { asset: string; network: string; walletType: "spot" | "funding" }) =>
-  apiRequest<WalletDepositAddress>("/wallet/deposit-address", {
+  apiRequest<WalletDepositAddress>("/wallet/address/generate", {
     auth: "required",
     method: "POST",
     body: payload,
   });
 
 export const fetchWalletAddresses = (asset: string, walletType?: "spot" | "funding") =>
-  apiRequest<{ items: WalletDepositAddress[] }>(`/wallet/deposit-addresses?asset=${encodeURIComponent(asset)}${walletType ? `&walletType=${walletType}` : ""}`, {
+  apiRequest<{ items: WalletDepositAddress[] }>(`/wallet/addresses?asset=${encodeURIComponent(asset)}${walletType ? `&walletType=${walletType}` : ""}`, {
     auth: "required",
   });
 
@@ -535,7 +535,7 @@ export const fetchWalletHistory = (params?: {
   if (params?.network) search.set("network", params.network);
   if (params?.search) search.set("search", params.search);
 
-  return apiRequest<WalletTransactionsResponse>(`/wallet/history${search.toString() ? `?${search.toString()}` : ""}`, {
+  return apiRequest<WalletTransactionsResponse>(`/wallet/transactions${search.toString() ? `?${search.toString()}` : ""}`, {
     auth: "required",
   });
 };
@@ -725,9 +725,6 @@ export const uploadKycDocuments = async (payload: {
   selfie: File;
 }) => {
   const accessToken = getAccessToken();
-  if (!accessToken) {
-    throw new Error("Authentication required.");
-  }
 
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
   if (!baseUrl) {
@@ -744,11 +741,14 @@ export const uploadKycDocuments = async (payload: {
   form.append("panCard", payload.panCard);
   form.append("selfie", payload.selfie);
 
+  const headers: HeadersInit = {};
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
   const response = await fetch(`${baseUrl}/kyc/documents/upload`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers,
     body: form,
     credentials: "include",
   });
@@ -843,20 +843,20 @@ export const fetchAdminKycCaseDocuments = (caseId: string) =>
 
 export const fetchAdminKycDocumentBlob = async (documentId: string) => {
   const accessToken = getAccessToken();
-  if (!accessToken) {
-    throw new Error("Authentication required.");
-  }
 
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "";
   if (!baseUrl) {
     throw new Error("API base URL is not configured.");
   }
 
+  const headers: HeadersInit = {};
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
   const response = await fetch(`${baseUrl}/admin/kyc/documents/${documentId}/file`, {
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers,
     credentials: "include",
   });
 

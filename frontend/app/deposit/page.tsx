@@ -6,7 +6,10 @@ import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ContentSection, PageHero } from "@/components/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { ApiRequestError } from "@/lib/api/client";
 import { createDepositRequest, requestDepositAddress, type WalletDepositAddress } from "@/lib/api/private-data";
+import { useAuth } from "@/lib/auth-provider";
+import { getAccessToken } from "@/lib/auth/session-store";
 import { useDemo } from "@/lib/demo-provider";
 
 const assetNetworks: Record<string, string[]> = {
@@ -23,6 +26,7 @@ const assetNetworks: Record<string, string[]> = {
 };
 
 export default function DepositPage() {
+  const { status } = useAuth();
   const { submitToast } = useDemo();
   const [asset, setAsset] = useState("USDT");
   const [network, setNetwork] = useState("TRC20");
@@ -34,13 +38,48 @@ export default function DepositPage() {
   const availableNetworks = useMemo(() => assetNetworks[asset] || ["ERC20"], [asset]);
 
   const generateAddress = async () => {
+    if (status === "loading") {
+      submitToast("Checking session", "Please wait while we confirm your authenticated session.");
+      return;
+    }
+
+    if (status !== "authenticated") {
+      submitToast("Sign in required", "Please sign in to generate a deposit address.");
+      return;
+    }
+
+    const hasToken = Boolean(getAccessToken());
+    console.info("[wallet][deposit] generate_address_start", {
+      status,
+      hasToken,
+      asset,
+      network,
+      walletType,
+    });
+
     setBusy(true);
 
     try {
       const response = await requestDepositAddress({ asset, network, walletType });
+      console.info("[wallet][deposit] generate_address_success", {
+        status,
+        hasToken,
+        asset,
+        network,
+        walletType,
+      });
       setRecord(response);
       submitToast("Deposit address ready", "Use this address only for the selected asset and network.");
     } catch (error) {
+      if (error instanceof ApiRequestError) {
+        console.warn("[wallet][deposit] generate_address_failed", {
+          status,
+          hasToken,
+          httpStatus: error.status,
+          code: error.code,
+          message: error.message,
+        });
+      }
       const message = error instanceof Error ? error.message : "Unable to generate a deposit address right now.";
       submitToast("Address unavailable", message);
     } finally {
@@ -49,6 +88,16 @@ export default function DepositPage() {
   };
 
   const submitDepositRequest = async () => {
+    if (status === "loading") {
+      submitToast("Checking session", "Please wait while we confirm your authenticated session.");
+      return;
+    }
+
+    if (status !== "authenticated") {
+      submitToast("Sign in required", "Please sign in to create a deposit intent.");
+      return;
+    }
+
     const parsedAmount = Number(amount);
 
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
@@ -61,12 +110,39 @@ export default function DepositPage() {
       return;
     }
 
+    const hasToken = Boolean(getAccessToken());
+    console.info("[wallet][deposit] create_intent_start", {
+      status,
+      hasToken,
+      asset,
+      network,
+      walletType,
+      amount: parsedAmount,
+    });
+
     setBusy(true);
 
     try {
       const response = await createDepositRequest({ asset, network, amount: parsedAmount, walletType, address: record.address });
+      console.info("[wallet][deposit] create_intent_success", {
+        status,
+        hasToken,
+        asset,
+        network,
+        walletType,
+        amount: parsedAmount,
+      });
       submitToast("Deposit intent created", response.message || "Your deposit is now tracked in wallet activity.");
     } catch (error) {
+      if (error instanceof ApiRequestError) {
+        console.warn("[wallet][deposit] create_intent_failed", {
+          status,
+          hasToken,
+          httpStatus: error.status,
+          code: error.code,
+          message: error.message,
+        });
+      }
       const message = error instanceof Error ? error.message : "We couldn't create your deposit request. Please try again.";
       submitToast("Request unavailable", message);
     } finally {
@@ -117,7 +193,7 @@ export default function DepositPage() {
               <div className="mt-6 rounded-3xl border border-white/10 bg-black/20 p-6">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm text-muted">Deposit address</p>
-                  <Button variant="secondary" onClick={generateAddress} disabled={busy}>
+                  <Button variant="secondary" onClick={generateAddress} disabled={busy || status !== "authenticated"}>
                     {busy ? "Generating..." : "Generate address"}
                   </Button>
                 </div>
@@ -158,7 +234,7 @@ export default function DepositPage() {
                 <p>Deposits are credited after network confirmations and compliance checks.</p>
                 <p>Deposit intents improve reconciliation and AML transaction monitoring.</p>
               </div>
-              <Button className="mt-6 w-full" onClick={submitDepositRequest} disabled={busy}>
+              <Button className="mt-6 w-full" onClick={submitDepositRequest} disabled={busy || status !== "authenticated"}>
                 {busy ? "Submitting..." : "Create deposit intent"}
               </Button>
             </Card>

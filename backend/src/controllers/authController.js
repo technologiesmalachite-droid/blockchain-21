@@ -3,6 +3,7 @@ import { authFactorsRepository } from "../repositories/authFactorsRepository.js"
 import { passwordResetTokensRepository } from "../repositories/passwordResetTokensRepository.js";
 import { sessionsRepository } from "../repositories/sessionsRepository.js";
 import { usersRepository } from "../repositories/usersRepository.js";
+import { authEmailLoginOtpsRepository } from "../repositories/authEmailLoginOtpsRepository.js";
 import {
   authenticateUserCredentials,
   createUser,
@@ -24,6 +25,12 @@ import {
 } from "../services/twoFactorService.js";
 import { sendContactVerificationOtp, verifyContactOtp } from "../services/kycService.js";
 import { notifyUser } from "../services/notificationService.js";
+import {
+  generateEmailOtpCode,
+  hashEmailOtpCode,
+  sendLoginOtpEmail,
+  verifyEmailOtpCode,
+} from "../services/authEmailOtpService.js";
 import {
   signAccessToken,
   signRefreshToken,
@@ -47,6 +54,13 @@ const knownAuthMessages = new Set([
   "Invalid credentials.",
   "Your account is restricted. Please contact support.",
   "This account is frozen pending compliance review.",
+  "Invalid email.",
+  "OTP sent successfully.",
+  "Invalid OTP.",
+  "OTP expired.",
+  "Too many attempts, try again later.",
+  "Please wait before requesting another OTP.",
+  "Email OTP delivery is temporarily unavailable. Please try again shortly.",
   "Two-factor verification is required.",
   "Two-factor authentication is not enabled on this account.",
   "Two-factor authentication is already enabled.",
@@ -63,6 +77,47 @@ const knownAuthMessages = new Set([
   "Password or valid two-factor code is required to regenerate backup codes.",
   "Password or valid two-factor code is required to disable two-factor authentication.",
 ]);
+const ACCESS_COOKIE_NAME = "mx_access_token_api";
+const REFRESH_COOKIE_NAME = "mx_refresh_token_api";
+const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
+const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const buildCookieOptions = (maxAge) => {
+  const options = {
+    httpOnly: true,
+    secure: Boolean(env.authCookieSecure),
+    sameSite: env.authCookieSameSite,
+    maxAge,
+    path: "/",
+  };
+
+  if (env.authCookieDomain) {
+    options.domain = env.authCookieDomain;
+  }
+
+  return options;
+};
+
+const setAuthCookies = (res, { accessToken, refreshToken }) => {
+  res.cookie(ACCESS_COOKIE_NAME, accessToken, buildCookieOptions(ACCESS_TOKEN_TTL_MS));
+  res.cookie(REFRESH_COOKIE_NAME, refreshToken, buildCookieOptions(REFRESH_TOKEN_TTL_MS));
+};
+
+const clearAuthCookies = (res) => {
+  const options = buildCookieOptions(0);
+  res.clearCookie(ACCESS_COOKIE_NAME, options);
+  res.clearCookie(REFRESH_COOKIE_NAME, options);
+};
+
+const readRefreshTokenFromRequest = (req) => {
+  const bodyToken = typeof req.body?.refreshToken === "string" ? req.body.refreshToken.trim() : "";
+  if (bodyToken) {
+    return bodyToken;
+  }
+
+  const cookieToken = typeof req.cookies?.[REFRESH_COOKIE_NAME] === "string" ? req.cookies[REFRESH_COOKIE_NAME].trim() : "";
+  return cookieToken || null;
+};
 
 const logAuthInfo = (event, details = {}) => {
   console.info(
@@ -101,6 +156,8 @@ const isInfrastructureIssue = (error) => {
     "CONFIG_SECRET_INVALID",
     "CONFIG_FIREBASE_ADMIN_MISSING",
     "CONFIG_FIREBASE_ADMIN_INVALID",
+    "CONFIG_EMAIL_OTP_PROVIDER_MISSING",
+    "EMAIL_OTP_DELIVERY_FAILED",
   ]);
   const dbCodes = /^(08|53|57|3D|XX)/;
   const message = typeof error.message === "string" ? error.message.toLowerCase() : "";
@@ -168,6 +225,60 @@ const knownMessageOrFallback = (error, fallback) => {
   return knownAuthMessages.has(message) ? message : fallback;
 };
 
+const mapEmailOtpSendError = (error) => {
+  const code = typeof error?.code === "string" ? error.code : "";
+
+  if (code === "AUTH_EMAIL_OTP_INVALID_EMAIL") {
+    return {
+      status: 400,
+      message: "Valid email is required",
+      logEvent: "auth_email_otp_send_validation_error",
+    };
+  }
+
+  if (code === "CONFIG_EMAIL_OTP_PROVIDER_MISSING") {
+    return {
+      status: 500,
+      message: "Email OTP service is not configured. Please contact support.",
+      logEvent: "auth_email_otp_send_config_missing",
+    };
+  }
+
+  if (code === "CONFIG_EMAIL_OTP_SENDER_INVALID") {
+    return {
+      status: 500,
+      message: "Email OTP sender configuration is invalid. Please contact support.",
+      logEvent: "auth_email_otp_send_sender_invalid",
+    };
+  }
+
+  if (code === "EMAIL_OTP_PROVIDER_AUTH_FAILED") {
+    return {
+      status: 503,
+      message: "Unable to send OTP. Please try again later.",
+      logEvent: "auth_email_otp_send_provider_auth_failed",
+    };
+  }
+
+  if (code === "EMAIL_OTP_PROVIDER_RESTRICTED_TEST_SENDER") {
+    return {
+      status: 503,
+      message: "Email provider restricted test sender. Please verify your email or domain.",
+      logEvent: "auth_email_otp_send_provider_restricted_sender",
+    };
+  }
+
+  if (code === "EMAIL_OTP_PROVIDER_NETWORK_FAILED" || code === "EMAIL_OTP_DELIVERY_FAILED") {
+    return {
+      status: 503,
+      message: "Unable to send OTP. Please try again later.",
+      logEvent: "auth_email_otp_send_provider_network_or_delivery_failed",
+    };
+  }
+
+  return null;
+};
+
 const respondWithSession = async (res, user, req) => {
   logAuthInfo("auth_session_issue_start", {
     requestId: req.requestId,
@@ -219,6 +330,8 @@ const respondWithSession = async (res, user, req) => {
     },
   });
 
+  setAuthCookies(res, { accessToken, refreshToken });
+
   return res.json({
     user: sanitizeUser(user),
     tokens: { accessToken, refreshToken },
@@ -243,6 +356,7 @@ const createTwoFactorChallengeResponse = (user, req) => {
 
 const normalizeTotpInput = (value) => String(value || "").trim();
 const normalizeEmailInput = (value) => String(value || "").trim().toLowerCase();
+const normalizeOtpInput = (value) => String(value || "").trim();
 const PASSWORD_RESET_GENERIC_MESSAGE = "If an account with that email exists, password reset instructions have been sent.";
 const createResetToken = () => crypto.randomBytes(32).toString("hex");
 
@@ -375,6 +489,246 @@ export const login = async (req, res) => {
     return res.status(401).json({
       message: knownMessageOrFallback(error, "Invalid credentials."),
     });
+  }
+};
+
+export const emailOtpSend = async (req, res) => {
+  const email = normalizeEmailInput(req.validated.body.email);
+  const devOtpDebugEnabled = env.nodeEnv !== "production" && env.authEmailOtpDebugLogCode;
+
+  if (!email) {
+    return res.status(400).json({
+      error: "Valid email is required",
+      message: "Valid email is required",
+    });
+  }
+
+  try {
+    const user = await usersRepository.findByEmail(email);
+    if (!user) {
+      return res.status(400).json({ message: "Invalid email." });
+    }
+
+    if (user.status !== "active" || user.accountRestrictions?.frozen) {
+      return res.status(403).json({ message: "Your account is restricted. Please contact support." });
+    }
+
+    await authEmailLoginOtpsRepository.deleteExpired();
+
+    const existing = await authEmailLoginOtpsRepository.findByEmail(email);
+    if (existing?.lastSentAt) {
+      const cooldownMs = Number(env.authEmailOtpCooldownSeconds || 60) * 1000;
+      const lastSentAt = new Date(existing.lastSentAt).getTime();
+      if (Number.isFinite(lastSentAt) && Date.now() - lastSentAt < cooldownMs) {
+        return res.status(429).json({ message: "Too many attempts, try again later." });
+      }
+    }
+
+    const otpCode = generateEmailOtpCode();
+    const otpHash = await hashEmailOtpCode(otpCode);
+    const expiresAt = new Date(Date.now() + Number(env.authEmailOtpExpiryMinutes || 5) * 60 * 1000).toISOString();
+
+    await authEmailLoginOtpsRepository.upsert({
+      email,
+      otpHash,
+      expiresAt,
+      maxAttempts: env.authEmailOtpMaxAttempts,
+      lastSentAt: new Date().toISOString(),
+    });
+
+    try {
+      await sendLoginOtpEmail({ email, otpCode, requestId: req.requestId });
+    } catch (deliveryError) {
+      if (!devOtpDebugEnabled) {
+        await authEmailLoginOtpsRepository.deleteByEmail(email);
+        throw deliveryError;
+      }
+
+      logAuthError("auth_email_otp_send_dev_fallback", deliveryError, {
+        requestId: req.requestId,
+        email,
+      });
+
+      await auditLogsRepository.create({
+        action: "auth_email_otp_send_dev_fallback",
+        actorId: user.id,
+        actorRole: user.role,
+        resourceType: "user",
+        resourceId: user.id,
+        metadata: {
+          route: req.originalUrl,
+          reason: "provider_delivery_failed",
+        },
+      });
+
+      return res.status(200).json({
+        message: "OTP generated for development testing. Email delivery failed; use DEV OTP from backend logs.",
+        debug: true,
+      });
+    }
+
+    await auditLogsRepository.create({
+      action: "auth_email_otp_sent",
+      actorId: user.id,
+      actorRole: user.role,
+      resourceType: "user",
+      resourceId: user.id,
+      metadata: {
+        route: req.originalUrl,
+      },
+    });
+
+    logAuthInfo("auth_email_otp_sent", {
+      requestId: req.requestId,
+      userId: user.id,
+      route: req.originalUrl,
+    });
+
+    return res.status(200).json(
+      devOtpDebugEnabled
+        ? { message: "OTP sent successfully.", debug: true }
+        : { message: "OTP sent successfully." },
+    );
+  } catch (error) {
+    const mappedError = mapEmailOtpSendError(error);
+    if (mappedError) {
+      logAuthError(mappedError.logEvent, error, {
+        requestId: req.requestId,
+        email,
+      });
+      return res.status(mappedError.status).json({
+        error: mappedError.message,
+        message: mappedError.message,
+      });
+    }
+
+    if (isInfrastructureIssue(error)) {
+      logAuthError("auth_email_otp_send_infrastructure_error", error, {
+        requestId: req.requestId,
+        email,
+      });
+      return res.status(503).json({
+        error: "Unable to send OTP. Please try again later.",
+        message: "Unable to send OTP. Please try again later.",
+      });
+    }
+
+    logAuthError("auth_email_otp_send_unexpected_error", error, {
+      requestId: req.requestId,
+      email,
+    });
+    return res.status(500).json({
+      error: "Unable to send OTP. Please try again later.",
+      message: "Unable to send OTP. Please try again later.",
+    });
+  }
+};
+
+export const emailOtpVerify = async (req, res) => {
+  const email = normalizeEmailInput(req.validated.body.email);
+  const otp = normalizeOtpInput(req.validated.body.otp);
+
+  if (!email) {
+    return res.status(400).json({ message: "Invalid email." });
+  }
+
+  try {
+    const user = await usersRepository.findByEmail(email);
+    if (!user) {
+      return res.status(400).json({ message: "Invalid email." });
+    }
+
+    if (user.status !== "active" || user.accountRestrictions?.frozen) {
+      return res.status(403).json({ message: "Your account is restricted. Please contact support." });
+    }
+
+    await authEmailLoginOtpsRepository.deleteExpired();
+    const challenge = await authEmailLoginOtpsRepository.findByEmail(email);
+
+    if (!challenge) {
+      return res.status(400).json({ message: "OTP expired." });
+    }
+
+    const now = Date.now();
+    const expiresAt = new Date(challenge.expiresAt).getTime();
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      await authEmailLoginOtpsRepository.deleteByEmail(email);
+      return res.status(400).json({ message: "OTP expired." });
+    }
+
+    if (Number(challenge.attempts || 0) >= Number(challenge.maxAttempts || env.authEmailOtpMaxAttempts)) {
+      await authEmailLoginOtpsRepository.deleteByEmail(email);
+      return res.status(429).json({ message: "Too many attempts, try again later." });
+    }
+
+    const valid = await verifyEmailOtpCode({
+      otpCode: otp,
+      otpHash: challenge.otpHash,
+    });
+
+    if (!valid) {
+      const updated = await authEmailLoginOtpsRepository.incrementAttemptsByEmail(email);
+      const updatedAttempts = Number(updated?.attempts || Number(challenge.attempts || 0) + 1);
+      const maxAttempts = Number(updated?.maxAttempts || challenge.maxAttempts || env.authEmailOtpMaxAttempts);
+
+      await auditLogsRepository.create({
+        action: "auth_email_otp_verify_failed",
+        actorId: user.id,
+        actorRole: user.role,
+        resourceType: "user",
+        resourceId: user.id,
+        metadata: {
+          attempts: updatedAttempts,
+          maxAttempts,
+          route: req.originalUrl,
+        },
+      });
+
+      if (updatedAttempts >= maxAttempts) {
+        await authEmailLoginOtpsRepository.deleteByEmail(email);
+        return res.status(429).json({ message: "Too many attempts, try again later." });
+      }
+
+      return res.status(401).json({ message: "Invalid OTP." });
+    }
+
+    await authEmailLoginOtpsRepository.deleteByEmail(email);
+
+    await auditLogsRepository.create({
+      action: "auth_email_otp_verified",
+      actorId: user.id,
+      actorRole: user.role,
+      resourceType: "user",
+      resourceId: user.id,
+      metadata: {
+        route: req.originalUrl,
+      },
+    });
+
+    if (user.twoFactorEnabled) {
+      if (!user.twoFactorSecret) {
+        return res.status(500).json({ message: "Two-factor authentication is currently unavailable for this account." });
+      }
+
+      return res.status(200).json(createTwoFactorChallengeResponse(user, req));
+    }
+
+    await respondWithSession(res, user, req);
+    return;
+  } catch (error) {
+    if (isInfrastructureIssue(error)) {
+      logAuthError("auth_email_otp_verify_infrastructure_error", error, {
+        requestId: req.requestId,
+        email,
+      });
+      return res.status(503).json({ message: "Authentication is temporarily unavailable. Please try again shortly." });
+    }
+
+    logAuthError("auth_email_otp_verify_unexpected_error", error, {
+      requestId: req.requestId,
+      email,
+    });
+    return res.status(500).json({ message: "Unable to verify OTP due to an unexpected server error." });
   }
 };
 
@@ -1001,18 +1355,19 @@ export const regenerateTwoFactorBackupCodes = async (req, res) => {
 };
 
 export const logout = async (req, res) => {
-  const { refreshToken } = req.body;
+  const refreshToken = readRefreshTokenFromRequest(req);
 
   if (refreshToken) {
     await sessionsRepository.revokeByToken(refreshToken);
   }
 
+  clearAuthCookies(res);
   return res.json({ message: "Logged out successfully." });
 };
 
 export const refresh = async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const refreshToken = readRefreshTokenFromRequest(req);
 
     if (!refreshToken) {
       return res.status(400).json({ message: "Refresh token is required." });
@@ -1031,8 +1386,12 @@ export const refresh = async (req, res) => {
       return res.status(401).json({ message: "User not found for this refresh token." });
     }
 
+    const accessToken = signAccessToken(user);
+    setAuthCookies(res, { accessToken, refreshToken });
+
     return res.json({
-      accessToken: signAccessToken(user),
+      accessToken,
+      refreshToken,
     });
   } catch (error) {
     if (isInfrastructureIssue(error)) {

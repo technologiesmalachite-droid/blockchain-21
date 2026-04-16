@@ -43,7 +43,7 @@ type SignupPageClientProps = {
 
 export function SignupPageClient({ rawNextPath }: SignupPageClientProps) {
   const { submitToast } = useDemo();
-  const { signUp, signUpWithGoogle, status, user } = useAuth();
+  const { signUp, signUpWithGoogle, authState, user } = useAuth();
   const router = useRouter();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -66,12 +66,20 @@ export function SignupPageClient({ rawNextPath }: SignupPageClientProps) {
   }, [signedInNextPath, user?.emailVerified, user?.kycStatus, user?.phoneVerified]);
 
   useEffect(() => {
-    if (status !== "authenticated") {
+    if (authState !== "authenticated") {
       return;
     }
 
     router.replace(authenticatedDestination);
-  }, [authenticatedDestination, router, status]);
+  }, [authState, authenticatedDestination, router]);
+
+  useEffect(() => {
+    if (authState !== "two_factor_pending" && authState !== "email_otp_pending") {
+      return;
+    }
+
+    router.replace(`/login${signedInNextPath ? `?next=${encodeURIComponent(signedInNextPath)}` : ""}`);
+  }, [authState, router, signedInNextPath]);
 
   const canSubmit = useMemo(
     () => Boolean(fullName.trim() && email.trim() && phone.trim() && password && confirmPassword && termsAccepted && privacyAccepted),
@@ -140,7 +148,7 @@ export function SignupPageClient({ rawNextPath }: SignupPageClientProps) {
     }
   };
 
-  if (status === "loading") {
+  if (authState === "loading") {
     return (
       <ContentSection>
         <div className="mx-auto flex min-h-[calc(100vh-17rem)] w-full max-w-xl items-center justify-center py-4">
@@ -155,13 +163,19 @@ export function SignupPageClient({ rawNextPath }: SignupPageClientProps) {
     );
   }
 
-  if (status === "authenticated") {
+  if (authState === "authenticated" || authState === "two_factor_pending" || authState === "email_otp_pending") {
     return (
       <ContentSection>
         <div className="mx-auto flex min-h-[calc(100vh-17rem)] w-full max-w-xl items-center justify-center py-4">
           <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-5 text-center">
             <p className="text-base font-semibold text-white">Redirecting to your account...</p>
-            <p className="mt-2 text-sm text-muted">You are already signed in.</p>
+            <p className="mt-2 text-sm text-muted">
+              {authState === "two_factor_pending"
+                ? "Complete two-factor verification to continue."
+                : authState === "email_otp_pending"
+                  ? "Complete email OTP verification to continue."
+                : "You are already signed in."}
+            </p>
           </div>
         </div>
       </ContentSection>

@@ -1,9 +1,13 @@
 import { usersRepository } from "../repositories/usersRepository.js";
 import { verifyAccessToken } from "../utils/tokens.js";
 
+const ACCESS_COOKIE_NAME = "mx_access_token_api";
+
 export const requireAuth = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  const cookieToken = typeof req.cookies?.[ACCESS_COOKIE_NAME] === "string" ? req.cookies[ACCESS_COOKIE_NAME] : null;
+  const token = bearerToken || cookieToken;
 
   if (!token) {
     return res.status(401).json({ message: "Authentication required." });

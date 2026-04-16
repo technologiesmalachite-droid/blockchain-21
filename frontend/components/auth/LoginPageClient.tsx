@@ -12,6 +12,7 @@ import { readSession } from "@/lib/auth/session-store";
 import { isFirebaseClientConfigured } from "@/lib/firebase";
 import { extractBackendErrorMessage } from "@/lib/auth/error-messages";
 import { sanitizePostAuthPath } from "@/lib/auth/navigation";
+import { ApiRequestError } from "@/lib/api/client";
 
 const shouldRedirectToVerification = (
   kycStatus: string | undefined,
@@ -30,44 +31,83 @@ const shouldRedirectToVerification = (
   return status !== "approved";
 };
 
+type LoginMode = "password" | "email_otp";
+
 type LoginPageClientProps = {
   rawNextPath?: string | null;
 };
 
 export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
   const { submitToast } = useDemo();
-  const { signIn, verifyTwoFactorLogin, signInWithGoogle, resendEmailVerification, status, user } = useAuth();
+  const {
+    signIn,
+    sendEmailOtpLogin,
+    verifyEmailOtpLogin,
+    verifyTwoFactorLogin,
+    signInWithGoogle,
+    resendEmailVerification,
+    authState,
+    emailOtpChallenge,
+    isTwoFactorPending,
+    twoFactorChallenge,
+    clearEmailOtpChallenge,
+    clearTwoFactorChallenge,
+    user,
+  } = useAuth();
   const router = useRouter();
+  const [loginMode, setLoginMode] = useState<LoginMode>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [emailOtpCode, setEmailOtpCode] = useState("");
   const [twoFactorCode, setTwoFactorCode] = useState("");
-  const [requiresTwoFactor, setRequiresTwoFactor] = useState(false);
-  const [twoFactorLoginToken, setTwoFactorLoginToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [resendBusy, setResendBusy] = useState(false);
   const [error, setError] = useState("");
 
   const nextPath = useMemo(() => sanitizePostAuthPath(rawNextPath, "/wallet"), [rawNextPath]);
-
   const authenticatedDestination = useMemo(() => {
     const requiresVerification = shouldRedirectToVerification(user?.kycStatus, user?.emailVerified, user?.phoneVerified);
     return requiresVerification ? "/kyc" : nextPath;
   }, [nextPath, user?.emailVerified, user?.kycStatus, user?.phoneVerified]);
 
+  const showTwoFactorStep = isTwoFactorPending && Boolean(twoFactorChallenge?.loginToken);
+  const showEmailOtpStep = authState === "email_otp_pending" && Boolean(emailOtpChallenge?.email);
+  const effectiveEmail = showEmailOtpStep ? emailOtpChallenge?.email || "" : email.trim().toLowerCase();
+  const usingEmailOtpFlow = loginMode === "email_otp" || showEmailOtpStep;
+
   useEffect(() => {
-    if (status !== "authenticated") {
+    if (authState !== "authenticated") {
       return;
     }
 
     router.replace(authenticatedDestination);
-  }, [authenticatedDestination, router, status]);
+  }, [authState, authenticatedDestination, router]);
 
-  const resetTwoFactorStep = () => {
-    setRequiresTwoFactor(false);
+  useEffect(() => {
+    if (showEmailOtpStep) {
+      setLoginMode("email_otp");
+    }
+  }, [showEmailOtpStep]);
+
+  const clearPendingChallenges = () => {
+    clearTwoFactorChallenge();
+    clearEmailOtpChallenge();
+  };
+
+  const usePasswordMode = () => {
+    clearPendingChallenges();
+    setEmailOtpCode("");
     setTwoFactorCode("");
-    setTwoFactorLoginToken("");
     setError("");
+    setLoginMode("password");
+  };
+
+  const useEmailOtpMode = () => {
+    clearTwoFactorChallenge();
+    setTwoFactorCode("");
+    setError("");
+    setLoginMode("email_otp");
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -81,16 +121,47 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
     setError("");
 
     try {
-      if (requiresTwoFactor) {
-        if (!twoFactorLoginToken) {
-          throw new Error("Two-factor login session expired. Please sign in again.");
+      if (showTwoFactorStep) {
+        const loginToken = twoFactorChallenge?.loginToken || "";
+        if (!loginToken) {
+          clearTwoFactorChallenge();
+          throw new Error("Session expired, please sign in again.");
+        }
+        if (!twoFactorCode.trim()) {
+          throw new Error("2FA code required. Enter your authenticator code to continue.");
         }
 
         await verifyTwoFactorLogin({
-          loginToken: twoFactorLoginToken,
+          loginToken,
           code: twoFactorCode.trim(),
         });
-        resetTwoFactorStep();
+      } else if (usingEmailOtpFlow) {
+        if (!effectiveEmail) {
+          throw new Error("Invalid email.");
+        }
+
+        if (showEmailOtpStep) {
+          if (!emailOtpCode.trim()) {
+            throw new Error("OTP is required.");
+          }
+
+          const result = await verifyEmailOtpLogin({
+            email: effectiveEmail,
+            otp: emailOtpCode.trim(),
+          });
+
+          if (result.requiresTwoFactor) {
+            setError(result.message || "2FA code required. Enter your authenticator code to continue.");
+            return;
+          }
+        } else {
+          const response = await sendEmailOtpLogin({
+            email: effectiveEmail,
+          });
+          setError("");
+          submitToast("OTP sent", response.message || "OTP sent successfully.");
+          return;
+        }
       } else {
         const result = await signIn({
           email: email.trim().toLowerCase(),
@@ -98,9 +169,7 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
         });
 
         if (result.requiresTwoFactor) {
-          setRequiresTwoFactor(true);
-          setTwoFactorLoginToken(result.loginToken || "");
-          setError(result.message || "Two-factor verification is required.");
+          setError(result.message || "2FA code required. Enter your authenticator code to continue.");
           return;
         }
       }
@@ -117,7 +186,40 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
       router.replace(requiresVerification ? "/kyc" : nextPath);
     } catch (requestError) {
       const backendMessage = extractBackendErrorMessage(requestError);
-      setError(backendMessage || getFriendlyAuthError(requestError));
+      const normalizedBackendMessage = backendMessage.trim();
+      const normalizedFallbackMessage = getFriendlyAuthError(requestError);
+      const normalizedMessageSource = (normalizedBackendMessage || normalizedFallbackMessage || "").toLowerCase();
+
+      if (requestError instanceof ApiRequestError && requestError.status === 401) {
+        if (showTwoFactorStep) {
+          if (
+            normalizedMessageSource.includes("invalid two-factor") ||
+            normalizedMessageSource.includes("invalid two factor") ||
+            normalizedMessageSource.includes("invalid authenticator") ||
+            normalizedMessageSource.includes("backup code")
+          ) {
+            setError("Invalid 2FA code. Please try again.");
+          } else if (
+            normalizedMessageSource.includes("expired") ||
+            normalizedMessageSource.includes("invalid or expired") ||
+            normalizedMessageSource.includes("session")
+          ) {
+            clearTwoFactorChallenge();
+            setTwoFactorCode("");
+            setError("Session expired, please sign in again.");
+          } else {
+            setError(normalizedBackendMessage || "Invalid 2FA code. Please try again.");
+          }
+        } else if (showEmailOtpStep || usingEmailOtpFlow) {
+          setError(normalizedBackendMessage || "Invalid OTP.");
+        } else {
+          setError(normalizedBackendMessage || "Invalid email or password.");
+        }
+      } else if (showTwoFactorStep && normalizedMessageSource.includes("code required")) {
+        setError("2FA code required. Enter your authenticator code to continue.");
+      } else {
+        setError(normalizedBackendMessage || normalizedFallbackMessage);
+      }
     } finally {
       setBusy(false);
     }
@@ -131,9 +233,7 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
       const result = await signInWithGoogle();
 
       if (result.requiresTwoFactor) {
-        setRequiresTwoFactor(true);
-        setTwoFactorLoginToken(result.loginToken || "");
-        setError(result.message || "Two-factor verification is required.");
+        setError(result.message || "2FA code required. Enter your authenticator code to continue.");
         return;
       }
 
@@ -158,7 +258,7 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
     }
   };
 
-  const canResendVerification = !requiresTwoFactor && error.toLowerCase().includes("verify your email");
+  const canResendVerification = !showTwoFactorStep && !usingEmailOtpFlow && error.toLowerCase().includes("verify your email");
 
   const onResendVerification = async () => {
     setResendBusy(true);
@@ -175,7 +275,7 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
     }
   };
 
-  if (status === "loading") {
+  if (authState === "loading") {
     return (
       <ContentSection>
         <div className="mx-auto flex min-h-[calc(100vh-17rem)] w-full max-w-xl items-center justify-center py-4">
@@ -190,7 +290,7 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
     );
   }
 
-  if (status === "authenticated") {
+  if (authState === "authenticated") {
     return (
       <ContentSection>
         <div className="mx-auto flex min-h-[calc(100vh-17rem)] w-full max-w-xl items-center justify-center py-4">
@@ -217,32 +317,56 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
 
           <form className="mt-6 space-y-4" onSubmit={onSubmit}>
             <input
-              value={email}
+              value={effectiveEmail}
               onChange={(event) => {
                 setEmail(event.target.value);
-                resetTwoFactorStep();
+                if (!showEmailOtpStep) {
+                  clearTwoFactorChallenge();
+                }
+                setError("");
               }}
               type="email"
               placeholder="Email"
               autoComplete="email"
               required
-              disabled={requiresTwoFactor}
+              disabled={showTwoFactorStep || showEmailOtpStep}
               className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
             />
-            <input
-              value={password}
-              onChange={(event) => {
-                setPassword(event.target.value);
-                resetTwoFactorStep();
-              }}
-              type="password"
-              placeholder="Password"
-              autoComplete="current-password"
-              required
-              disabled={requiresTwoFactor}
-              className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
-            />
-            {requiresTwoFactor ? (
+
+            {!usingEmailOtpFlow && !showTwoFactorStep ? (
+              <input
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  clearTwoFactorChallenge();
+                  setError("");
+                }}
+                type="password"
+                placeholder="Password"
+                autoComplete="current-password"
+                required
+                className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
+              />
+            ) : null}
+
+            {showEmailOtpStep ? (
+              <>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-muted">
+                  Enter the 6-digit code sent to {emailOtpChallenge?.email}.
+                </div>
+                <input
+                  value={emailOtpCode}
+                  onChange={(event) => setEmailOtpCode(event.target.value)}
+                  type="text"
+                  autoComplete="one-time-code"
+                  placeholder="6-digit OTP"
+                  required
+                  className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
+                />
+              </>
+            ) : null}
+
+            {showTwoFactorStep ? (
               <>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-muted">
                   Two-factor verification is enabled for this account. Enter your current 2FA code to continue.
@@ -258,7 +382,9 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
                 />
               </>
             ) : null}
+
             {error ? <p className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p> : null}
+
             {canResendVerification ? (
               <Button
                 className="w-full"
@@ -270,25 +396,49 @@ export function LoginPageClient({ rawNextPath }: LoginPageClientProps) {
                 {resendBusy ? "Sending verification..." : "Resend verification email"}
               </Button>
             ) : null}
+
             <Button className="w-full" type="submit" disabled={busy}>
-              {busy ? "Signing in..." : requiresTwoFactor ? "Verify and sign in" : "Sign in"}
+              {busy
+                ? "Please wait..."
+                : showTwoFactorStep
+                  ? "Verify and sign in"
+                  : usingEmailOtpFlow
+                    ? showEmailOtpStep
+                      ? "Verify OTP and sign in"
+                      : "Send OTP"
+                    : "Sign in"}
             </Button>
-            {requiresTwoFactor ? (
-              <Button className="w-full" type="button" variant="secondary" disabled={busy} onClick={resetTwoFactorStep}>
+
+            {showTwoFactorStep ? (
+              <Button className="w-full" type="button" variant="secondary" disabled={busy} onClick={usePasswordMode}>
                 Use different credentials
               </Button>
             ) : null}
-            {isFirebaseClientConfigured ? (
+
+            {!showTwoFactorStep ? (
               <Button
                 className="w-full"
                 type="button"
                 variant="secondary"
-                disabled={googleBusy || busy || requiresTwoFactor}
+                disabled={busy || googleBusy}
+                onClick={usingEmailOtpFlow ? usePasswordMode : useEmailOtpMode}
+              >
+                {usingEmailOtpFlow ? "Use email and password" : "Login with Email OTP"}
+              </Button>
+            ) : null}
+
+            {isFirebaseClientConfigured && !showTwoFactorStep && !usingEmailOtpFlow ? (
+              <Button
+                className="w-full"
+                type="button"
+                variant="secondary"
+                disabled={googleBusy || busy}
                 onClick={onContinueWithGoogle}
               >
                 {googleBusy ? "Connecting..." : "Continue with Google"}
               </Button>
             ) : null}
+
             <div className="flex items-center justify-between text-sm text-muted">
               <Link href={`/signup${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ""}`}>Create account</Link>
               <Link href="/forgot-password">Forgot password?</Link>

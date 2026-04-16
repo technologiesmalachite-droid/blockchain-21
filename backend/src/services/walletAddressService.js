@@ -120,8 +120,25 @@ export const getOrCreateDepositAddress = async ({ userId, asset, network, wallet
 };
 
 export const getWalletAddressBook = async ({ userId, asset, walletType }) => {
-  const { asset: assetCode } = assertSupportedAsset(asset);
-  const records = await walletAddressesRepository.listByUserAsset({ userId, asset: assetCode, walletType: walletType ? normalizeWalletType(walletType) : undefined, limit: 50 });
+  const normalizedWalletType = walletType ? normalizeWalletType(walletType) : undefined;
+  let records;
+
+  if (asset) {
+    const { asset: assetCode } = assertSupportedAsset(asset);
+    records = await walletAddressesRepository.listByUserAsset({
+      userId,
+      asset: assetCode,
+      walletType: normalizedWalletType,
+      limit: 50,
+    });
+  } else {
+    records = await walletAddressesRepository.listByUser({
+      userId,
+      walletType: normalizedWalletType,
+      limit: 50,
+    });
+  }
+
   return records.map((record) => mapAddressRecord(record));
 };
 

@@ -64,6 +64,23 @@ export const loginSchema = z.object({
   params: z.object({}).optional(),
 });
 
+export const emailOtpSendSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+export const emailOtpVerifySchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+    otp: z.string().trim().regex(/^[0-9]{6}$/, "OTP must be a 6-digit code."),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
 export const forgotPasswordSchema = z.object({
   body: z.object({
     email: z.string().email(),
@@ -267,7 +284,7 @@ export const depositAddressSchema = z.object({
 
 export const walletAddressBookQuerySchema = z.object({
   query: z.object({
-    asset: z.string().min(2),
+    asset: z.string().min(2).optional(),
     walletType: z.enum(["spot", "funding"]).optional(),
   }),
   params: z.object({}).optional(),
