@@ -73,7 +73,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 const GOOGLE_INTENT_STORAGE_KEY = "malachitex.firebase.google.intent.v1";
 const EMAIL_VERIFICATION_REQUIRED_CODE = "auth/email-not-verified";
 
-const isAuthError = (error: unknown) => error instanceof ApiRequestError && (error.status === 401 || error.status === 403);
+const isAuthError = (error: unknown) => error instanceof ApiRequestError && error.status === 401;
 
 const isTwoFactorChallenge = (value: unknown): value is TwoFactorLoginChallenge =>
   Boolean(
@@ -125,6 +125,31 @@ const signInChallengeResult = (challenge: TwoFactorLoginChallenge): SignInResult
   message: challenge.message,
 });
 
+const shouldDebugAuthProvider = () =>
+  (() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+      return true;
+    }
+
+    try {
+      return window.localStorage.getItem("mx_debug_auth") === "1";
+    } catch {
+      return false;
+    }
+  })();
+
+const logAuthProvider = (event: string, payload: Record<string, unknown>) => {
+  if (!shouldDebugAuthProvider()) {
+    return;
+  }
+
+  console.info(`[auth-provider] ${event}`, payload);
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>("loading");
@@ -133,6 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [firebaseReady, setFirebaseReady] = useState(false);
   const [syncingFirebaseSession, setSyncingFirebaseSession] = useState(false);
   const [restoringSessionFromToken, setRestoringSessionFromToken] = useState(false);
+  const [hydrationTimedOut, setHydrationTimedOut] = useState(false);
   const [firebaseSessionSyncUid, setFirebaseSessionSyncUid] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ open: boolean; message: string }>({
     open: false,
@@ -141,10 +167,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const existing = readSession();
+    logAuthProvider("session_bootstrap", {
+      hasSession: Boolean(existing),
+      hasAccessToken: Boolean(existing?.tokens?.accessToken),
+      hasRefreshToken: Boolean(existing?.tokens?.refreshToken),
+    });
     setSession(existing);
     setStatus(existing ? "authenticated" : "unauthenticated");
     setSessionBootstrapped(true);
   }, []);
+
+  useEffect(() => {
+    if (sessionBootstrapped && firebaseReady) {
+      setHydrationTimedOut(false);
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      logAuthProvider("hydration_timeout", {
+        sessionBootstrapped,
+        firebaseReady,
+      });
+      setHydrationTimedOut(true);
+    }, 6000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [firebaseReady, sessionBootstrapped]);
 
   useEffect(() => {
     const unsubscribe = observeAuthState((nextFirebaseUser) => {
@@ -240,6 +294,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    logAuthProvider("cookie_recovery_start", {
+      hasAccessTokenCookie: hasAccessTokenCookie(),
+    });
+
     let active = true;
     setRestoringSessionFromToken(true);
 
@@ -261,11 +319,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             refreshToken: getRefreshToken() || "",
           },
         });
+
+        logAuthProvider("cookie_recovery_success", {
+          hasAccessToken: Boolean(accessToken),
+          hasRefreshToken: Boolean(getRefreshToken()),
+        });
       })
       .catch((error) => {
         if (!active) {
           return;
         }
+
+        logAuthProvider("cookie_recovery_failed", {
+          message: error instanceof Error ? error.message : "unknown_error",
+          isAuthError: isAuthError(error),
+        });
 
         if (isAuthError(error)) {
           clearSession();
@@ -575,11 +643,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     status === "unauthenticated" &&
     !session?.tokens.accessToken &&
     hasAccessTokenCookie();
-  const authBootstrapPending = !sessionBootstrapped || !firebaseReady || restoringSessionFromToken || cookieSessionRecoveryPending;
+  const authBootstrapPending =
+    !hydrationTimedOut &&
+    (!sessionBootstrapped || !firebaseReady || restoringSessionFromToken || cookieSessionRecoveryPending);
   const resolvedStatus: AuthStatus =
     authBootstrapPending || status === "loading" || (syncingFirebaseSession && !session?.tokens.accessToken)
       ? "loading"
       : status;
+
+  useEffect(() => {
+    logAuthProvider("resolved_status", {
+      status: resolvedStatus,
+      authBootstrapPending,
+      syncingFirebaseSession,
+      restoringSessionFromToken,
+      hydrationTimedOut,
+      hasSession: Boolean(session),
+      hasAccessToken: Boolean(session?.tokens?.accessToken),
+      hasRefreshToken: Boolean(session?.tokens?.refreshToken),
+    });
+  }, [authBootstrapPending, hydrationTimedOut, resolvedStatus, restoringSessionFromToken, session, syncingFirebaseSession]);
 
   const value = useMemo<AuthContextType>(
     () => ({
