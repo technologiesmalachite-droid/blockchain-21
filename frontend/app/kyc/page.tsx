@@ -16,6 +16,7 @@ import {
   verifyKycEmailOtp,
   verifyKycMobileOtp,
   type KycOptionsResponse,
+  type ProfileResponse,
   type KycStatusResponse,
 } from "@/lib/api/private-data";
 import { useAuth } from "@/lib/auth-provider";
@@ -39,6 +40,22 @@ const formatBytes = (bytes: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error) {
+    const message = error.message.trim();
+    if (message) {
+      return message;
+    }
+  }
+
+  return fallback;
+};
+
+const normalizeKycStatus = (value: string | undefined) => {
+  const normalized = String(value || "unverified").trim().toLowerCase();
+  return normalized === "pending" ? "unverified" : normalized;
+};
+
 export default function KycPage() {
   const { status: authStatus } = useAuth();
   const { submitToast } = useDemo();
@@ -49,6 +66,7 @@ export default function KycPage() {
   const [countryCode, setCountryCode] = useState("US");
   const [options, setOptions] = useState<KycOptionsResponse["options"] | null>(null);
   const [status, setStatus] = useState<KycStatusResponse | null>(null);
+  const [profileUser, setProfileUser] = useState<ProfileResponse["user"] | null>(null);
 
   const [fullLegalName, setFullLegalName] = useState("");
   const [dob, setDob] = useState("");
@@ -84,23 +102,25 @@ export default function KycPage() {
         fetchKycOptions(currentCountry),
       ]);
 
-      setStatus(kycStatus);
-      setOptions(kycOptions.options);
-      setCountryCode(profile.user.countryCode || currentCountry);
-      setEmail((previous) => previous || profile.user.email || "");
-      setFullLegalName((previous) => previous || profile.user.fullName || "");
-      setMobile((previous) => previous || profile.user.phone || "");
-
       const profileData = kycStatus.profile;
-      if (profileData) {
-        setDob((previous) => previous || profileData.dob || "");
-        setAddress((previous) => previous || profileData.residentialAddress || "");
-        setGovernmentIdType((previous) => previous || profileData.idDocumentType || profileData.verificationMethod || "");
-      } else if (kycOptions.options.methods.length > 0) {
-        setGovernmentIdType((previous) => previous || kycOptions.options.methods[0].key);
-      }
-    } catch {
-      submitToast("Verification unavailable", "Unable to load verification center right now.");
+      setStatus(kycStatus);
+      setProfileUser(profile.user);
+      setOptions(kycOptions.options);
+      setCountryCode((profileData?.jurisdiction || profile.user.countryCode || currentCountry || "US").toUpperCase());
+      setEmail(profileData?.email || profile.user.email || "");
+      setFullLegalName(profileData?.legalName || profile.user.fullName || "");
+      setMobile(profile.user.phone || profileData?.mobile || "");
+      setDob(profileData?.dob || "");
+      setAddress(profileData?.residentialAddress || "");
+      setGovernmentIdType(
+        profileData?.idDocumentType ||
+          profileData?.verificationMethod ||
+          kycOptions.options.methods[0]?.key ||
+          "",
+      );
+      setAddressProofProvided(profileData?.verificationMethod ? true : false);
+    } catch (error) {
+      submitToast("Verification unavailable", getErrorMessage(error, "KYC status could not be refreshed."));
     } finally {
       setLoading(false);
     }
@@ -122,6 +142,8 @@ export default function KycPage() {
   );
 
   const step = useMemo<VerificationStep>(() => {
+    const normalizedStatus = normalizeKycStatus(status?.status);
+
     if (!status?.contacts?.emailVerified) {
       return 1;
     }
@@ -132,7 +154,7 @@ export default function KycPage() {
       return 3;
     }
 
-    if (status.status === "under_review" || status.status === "approved") {
+    if (normalizedStatus === "under_review" || normalizedStatus === "approved") {
       return 5;
     }
 
@@ -144,8 +166,8 @@ export default function KycPage() {
     try {
       await sendKycEmailOtp();
       submitToast("OTP sent", "Email OTP sent. Check your inbox and enter the code.");
-    } catch {
-      submitToast("Unable to send OTP", "Please wait and try again.");
+    } catch (error) {
+      submitToast("Unable to send OTP", getErrorMessage(error, "Please wait and try again."));
     } finally {
       setSendingEmailOtp(false);
     }
@@ -163,20 +185,27 @@ export default function KycPage() {
       submitToast("Email verified", "Email verification completed.");
       setEmailCode("");
       await refreshData(countryCode);
-    } catch {
-      submitToast("Verification failed", "Email OTP is invalid or expired.");
+    } catch (error) {
+      submitToast("Verification failed", getErrorMessage(error, "Email OTP is invalid or expired."));
     } finally {
       setVerifyingEmailOtp(false);
     }
   };
 
   const sendMobileOtp = async () => {
+    const normalizedMobile = mobile.trim();
+    if (!normalizedMobile) {
+      submitToast("Verify your phone to continue", "Verify your phone number to continue KYC.");
+      return;
+    }
+
     setSendingMobileOtp(true);
     try {
-      await sendKycMobileOtp();
+      await sendKycMobileOtp(normalizedMobile);
       submitToast("OTP sent", "Mobile OTP sent successfully.");
-    } catch {
-      submitToast("Unable to send OTP", "Please wait and try again.");
+      await refreshData(countryCode);
+    } catch (error) {
+      submitToast("Unable to send OTP", getErrorMessage(error, "Please wait and try again."));
     } finally {
       setSendingMobileOtp(false);
     }
@@ -194,8 +223,8 @@ export default function KycPage() {
       submitToast("Mobile verified", "Mobile verification completed.");
       setMobileCode("");
       await refreshData(countryCode);
-    } catch {
-      submitToast("Verification failed", "Mobile OTP is invalid or expired.");
+    } catch (error) {
+      submitToast("Verification failed", getErrorMessage(error, "Mobile OTP is invalid or expired."));
     } finally {
       setVerifyingMobileOtp(false);
     }
@@ -224,8 +253,8 @@ export default function KycPage() {
       submitToast("Profile saved", "Identity profile submitted. Upload documents next.");
       setPanNumber("");
       await refreshData(countryCode);
-    } catch {
-      submitToast("Profile submission failed", "Please verify your PAN, mobile, and address details.");
+    } catch (error) {
+      submitToast("Profile submission failed", getErrorMessage(error, "Complete profile details to continue."));
     } finally {
       setSavingProfile(false);
     }
@@ -263,8 +292,8 @@ export default function KycPage() {
       setPanCard(null);
       setSelfie(null);
       await refreshData(countryCode);
-    } catch {
-      submitToast("Upload failed", "Please check file type/size and try again.");
+    } catch (error) {
+      submitToast("Upload failed", getErrorMessage(error, "Please check file type/size and try again."));
     } finally {
       setUploadingDocs(false);
     }
@@ -332,7 +361,13 @@ export default function KycPage() {
                   {step === 2 ? (
                     <div className="space-y-3">
                       <p className="text-lg font-semibold text-white">Step 2: Mobile verification</p>
-                      <p className="text-sm text-muted">Verify your mobile number with OTP and attempt protection enabled.</p>
+                      <p className="text-sm text-muted">Verify your phone number to continue KYC.</p>
+                      <input
+                        value={mobile}
+                        onChange={(event) => setMobile(event.target.value)}
+                        placeholder="Enter mobile number (with country code)"
+                        className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
+                      />
                       <Button onClick={sendMobileOtp} disabled={sendingMobileOtp}>
                         {sendingMobileOtp ? "Sending..." : "Send Mobile OTP"}
                       </Button>
@@ -454,7 +489,7 @@ export default function KycPage() {
                     <div className="space-y-3">
                       <p className="text-lg font-semibold text-white">Step 5: Review status</p>
                       <p className="text-sm text-muted">
-                        Your documents are currently {status?.status === "approved" ? "approved" : "under compliance review"}.
+                        Your documents are currently {normalizeKycStatus(status?.status) === "approved" ? "approved" : "under compliance review"}.
                       </p>
                       {status?.latestReview?.rejectionReason ? (
                         <p className="rounded-2xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-100">
@@ -471,11 +506,13 @@ export default function KycPage() {
               <Card>
                 <p className="text-lg font-semibold text-white">Verification status</p>
                 <div className="mt-3 space-y-2 text-sm text-muted">
-                  <p>Status: <span className="text-white">{status?.status || "unverified"}</span></p>
-                  <p>Email: <span className="text-white">{status?.contacts.emailVerified ? "verified" : "pending"}</span></p>
-                  <p>Mobile: <span className="text-white">{status?.contacts.mobileVerified ? "verified" : "pending"}</span></p>
+                  <p>Status: <span className="text-white">{normalizeKycStatus(status?.status)}</span></p>
+                  <p>Email: <span className="text-white">{status?.contacts?.emailVerified ? "verified" : "pending"}</span></p>
+                  <p>Mobile: <span className="text-white">{status?.contacts?.mobileVerified ? "verified" : "pending"}</span></p>
+                  <p>2FA: <span className="text-white">{profileUser?.twoFactorEnabled ? "enabled" : "disabled"}</span></p>
                   <p>PAN: <span className="text-white">{status?.profile?.panLast4 ? `******${status.profile.panLast4}` : "pending"}</span></p>
                   <p>Tier: <span className="text-white">{status?.tier || "none"}</span></p>
+                  <p>Recovery codes: <span className="text-white">{profileUser?.twoFactorRecoveryCodesRemaining ?? 0}</span></p>
                 </div>
                 {status?.latestSubmission?.rejectionReason ? (
                   <p className="mt-3 rounded-2xl border border-rose-300/30 bg-rose-500/10 p-3 text-sm text-rose-100">

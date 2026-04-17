@@ -1,6 +1,6 @@
 "use client";
 
-import { apiRequest } from "@/lib/api/client";
+import { ApiRequestError, apiRequest } from "@/lib/api/client";
 import { getAccessToken } from "@/lib/auth/session-store";
 
 export type OpenPosition = {
@@ -663,15 +663,48 @@ export const fetchKycOptions = (countryCode: string) =>
     auth: "required",
   });
 
-export const sendKycEmailOtp = () =>
-  apiRequest<{ message: string; challengeId: string; expiresAt: string; cooldownUntil: string; resendCount: number; debugCode?: string }>(
-    "/kyc/email/send-otp",
-    {
+export const sendKycEmailOtp = async () => {
+  try {
+    const response = await apiRequest<{
+      message: string;
+      challengeId: string;
+      expiresAt: string;
+      cooldownUntil: string;
+      resendCount: number;
+      debugCode?: string;
+    }>("/kyc/email/send-otp", {
       auth: "required",
       method: "POST",
       body: {},
-    },
-  );
+    });
+
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[kyc-email-otp-send] response", {
+        status: 200,
+        body: response,
+      });
+    }
+
+    return response;
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      if (error instanceof ApiRequestError) {
+        console.error("[kyc-email-otp-send] response", {
+          status: error.status,
+          body: error.responseBody ?? { message: error.message },
+          code: error.code,
+        });
+      } else {
+        console.error("[kyc-email-otp-send] response", {
+          status: 0,
+          body: { message: error instanceof Error ? error.message : "Unknown error" },
+        });
+      }
+    }
+
+    throw error;
+  }
+};
 
 export const verifyKycEmailOtp = (code: string) =>
   apiRequest<{ message: string; status: string }>("/kyc/email/verify-otp", {
@@ -680,15 +713,48 @@ export const verifyKycEmailOtp = (code: string) =>
     body: { code },
   });
 
-export const sendKycMobileOtp = () =>
-  apiRequest<{ message: string; challengeId: string; expiresAt: string; cooldownUntil: string; resendCount: number; debugCode?: string }>(
-    "/kyc/mobile/send-otp",
-    {
+export const sendKycMobileOtp = async (mobile?: string) => {
+  try {
+    const response = await apiRequest<{
+      message: string;
+      challengeId: string;
+      expiresAt: string;
+      cooldownUntil: string;
+      resendCount: number;
+      debugCode?: string;
+    }>("/kyc/mobile/send-otp", {
       auth: "required",
       method: "POST",
-      body: {},
-    },
-  );
+      body: mobile ? { mobile } : {},
+    });
+
+    if (process.env.NODE_ENV !== "production") {
+      console.info("[kyc-mobile-otp-send] response", {
+        status: 200,
+        body: response,
+      });
+    }
+
+    return response;
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      if (error instanceof ApiRequestError) {
+        console.error("[kyc-mobile-otp-send] response", {
+          status: error.status,
+          body: error.responseBody ?? { message: error.message },
+          code: error.code,
+        });
+      } else {
+        console.error("[kyc-mobile-otp-send] response", {
+          status: 0,
+          body: { message: error instanceof Error ? error.message : "Unknown error" },
+        });
+      }
+    }
+
+    throw error;
+  }
+};
 
 export const verifyKycMobileOtp = (code: string) =>
   apiRequest<{ message: string; status: string }>("/kyc/mobile/verify-otp", {

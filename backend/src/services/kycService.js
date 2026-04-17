@@ -7,6 +7,7 @@ import { kycDocumentsRepository } from "../repositories/kycDocumentsRepository.j
 import { kycProfilesRepository } from "../repositories/kycProfilesRepository.js";
 import { kycReviewsRepository } from "../repositories/kycReviewsRepository.js";
 import { usersRepository } from "../repositories/usersRepository.js";
+import { sendKycOtpEmail } from "./authEmailOtpService.js";
 import { providers } from "./providerRegistry.js";
 import { deleteEncryptedKycFile, readEncryptedKycFile, storeEncryptedKycFile } from "./kycStorageService.js";
 import { notifyUser } from "./notificationService.js";
@@ -67,6 +68,95 @@ const promoteStatus = (currentStatus, nextStatus) => {
 };
 
 const generateOtp = () => `${Math.floor(100000 + Math.random() * 900000)}`;
+const DATABASE_TRANSIENT_CODE_PREFIX = /^(08|53|57|58|XX)/;
+const PHONE_INPUT_REGEX = /^\+?[0-9][0-9\s-]{7,15}$/;
+
+const createKycOtpError = (message, code, statusCode, details = null) => {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  if (details) {
+    error.details = details;
+  }
+  return error;
+};
+
+const isTransientDatabaseError = (error) => {
+  const code = typeof error?.code === "string" ? error.code : "";
+  const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
+
+  return (
+    DATABASE_TRANSIENT_CODE_PREFIX.test(code) ||
+    code === "ECONNRESET" ||
+    code === "ECONNREFUSED" ||
+    code === "ETIMEDOUT" ||
+    message.includes("database") ||
+    message.includes("connection") ||
+    message.includes("connect")
+  );
+};
+
+const normalizePhoneInput = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  if (!PHONE_INPUT_REGEX.test(raw)) {
+    return "";
+  }
+
+  const normalized = raw.replace(/[\s-]/g, "");
+  return normalized.startsWith("+") ? `+${normalized.slice(1).replace(/\+/g, "")}` : normalized.replace(/\+/g, "");
+};
+
+const maskEmailDestination = (email) => {
+  const normalized = String(email || "").trim().toLowerCase();
+  const [local, domain] = normalized.split("@");
+  if (!local || !domain) {
+    return "unknown";
+  }
+  if (local.length <= 2) {
+    return `${local[0] || "*"}***@${domain}`;
+  }
+  return `${local.slice(0, 2)}***@${domain}`;
+};
+
+const maskPhoneDestination = (phone) => {
+  const value = String(phone || "").trim();
+  if (value.length <= 4) {
+    return "hidden";
+  }
+  return `${value.slice(0, 2)}******${value.slice(-2)}`;
+};
+
+const maskOtpDestination = (channel, destination) =>
+  channel === "email" ? maskEmailDestination(destination) : maskPhoneDestination(destination);
+
+const logKycOtpInfo = (event, metadata = {}) => {
+  console.info(
+    JSON.stringify({
+      level: "info",
+      event,
+      ...metadata,
+    }),
+  );
+};
+
+const logKycOtpError = (event, error, metadata = {}) => {
+  console.error(
+    JSON.stringify({
+      level: "error",
+      event,
+      ...metadata,
+      code: typeof error?.code === "string" ? error.code : null,
+      status: typeof error?.status === "number" ? error.status : null,
+      statusCode: typeof error?.statusCode === "number" ? error.statusCode : null,
+      message: typeof error?.message === "string" ? error.message : "Unknown error",
+      details: typeof error?.details === "string" ? error.details : null,
+    }),
+  );
+};
 
 const maskPan = (value) => {
   if (!value) {
@@ -142,7 +232,6 @@ const selectVerificationRepository = (channel) => {
   if (channel === "email") {
     return {
       repository: emailVerificationsRepository,
-      provider: providers.emailOtp,
       destinationField: "email",
     };
   }
@@ -154,31 +243,167 @@ const selectVerificationRepository = (channel) => {
   };
 };
 
-export const sendContactVerificationOtp = async ({ user, channel }) => {
-  const { repository, provider, destinationField } = selectVerificationRepository(channel);
-  const destination = destinationField === "email" ? user.email : user.phone;
+const normalizeDeliveryError = (error) => {
+  const code = typeof error?.code === "string" ? error.code : "";
+
+  if (code === "CONFIG_EMAIL_OTP_PROVIDER_MISSING") {
+    return createKycOtpError(
+      "Email provider unavailable. Please try again shortly.",
+      "CONFIG_EMAIL_OTP_PROVIDER_MISSING",
+      503,
+    );
+  }
+
+  if (code === "CONFIG_EMAIL_OTP_SENDER_INVALID") {
+    return createKycOtpError(
+      "Email sender configuration is invalid. Please contact support.",
+      "CONFIG_EMAIL_OTP_SENDER_INVALID",
+      500,
+    );
+  }
+
+  if (code === "EMAIL_OTP_PROVIDER_RESTRICTED_TEST_SENDER") {
+    return createKycOtpError(
+      "Email provider rejected the sender identity. Please verify sender/domain settings.",
+      "EMAIL_OTP_PROVIDER_RESTRICTED_TEST_SENDER",
+      503,
+    );
+  }
+
+  if (code === "EMAIL_OTP_PROVIDER_AUTH_FAILED") {
+    return createKycOtpError(
+      "Email provider authentication failed. Please try again shortly.",
+      "EMAIL_OTP_PROVIDER_AUTH_FAILED",
+      503,
+    );
+  }
+
+  if (code === "EMAIL_OTP_PROVIDER_NETWORK_FAILED" || code === "EMAIL_OTP_DELIVERY_FAILED") {
+    return createKycOtpError(
+      "Email provider unavailable. Please try again shortly.",
+      code || "EMAIL_OTP_DELIVERY_FAILED",
+      503,
+    );
+  }
+
+  return createKycOtpError(
+    "Unable to send OTP right now. Please try again shortly.",
+    "KYC_OTP_DELIVERY_FAILED",
+    503,
+  );
+};
+
+const sendOtpViaChannel = async ({ channel, user, destination, otp, requestId }) => {
+  if (channel === "email") {
+    await sendKycOtpEmail({
+      email: destination,
+      otpCode: otp,
+      requestId,
+    });
+    return;
+  }
+
+  await providers.smsOtp.sendVerification({
+    userId: user.id,
+    destination,
+    otpCode: otp,
+    requestId,
+  });
+};
+
+const resolveOtpDestination = async ({ user, channel, destinationOverride = "" }) => {
+  if (channel === "email") {
+    return String(user.email || "").trim().toLowerCase();
+  }
+
+  const normalizedOverride = normalizePhoneInput(destinationOverride);
+  if (destinationOverride && !normalizedOverride) {
+    throw createKycOtpError("Enter a valid mobile number to continue KYC.", "KYC_MOBILE_INVALID", 400);
+  }
+
+  if (normalizedOverride) {
+    return normalizedOverride;
+  }
+
+  const normalizedUserPhone = normalizePhoneInput(user.phone);
+  if (normalizedUserPhone) {
+    return normalizedUserPhone;
+  }
+
+  const profile = await kycProfilesRepository.findByUserId(user.id);
+  const normalizedProfileMobile = normalizePhoneInput(profile?.mobile);
+  if (normalizedProfileMobile) {
+    return normalizedProfileMobile;
+  }
+
+  throw createKycOtpError("Verify your phone number to continue KYC.", "KYC_MOBILE_MISSING", 400);
+};
+
+export const sendContactVerificationOtp = async ({ user, channel, requestId = null, destinationOverride = "" }) => {
+  const { repository } = selectVerificationRepository(channel);
+  let destination;
+  try {
+    destination = await resolveOtpDestination({ user, channel, destinationOverride });
+  } catch (error) {
+    if (isTransientDatabaseError(error)) {
+      throw createKycOtpError(
+        "Verification service is temporarily unavailable. Please try again shortly.",
+        "KYC_OTP_DATABASE_UNAVAILABLE",
+        503,
+      );
+    }
+    throw error;
+  }
   const alreadyVerified = channel === "email" ? Boolean(user.emailVerified) : Boolean(user.phoneVerified);
 
   if (!destination) {
-    throw new Error(`${channel === "email" ? "Email" : "Phone number"} is missing on this account.`);
+    throw createKycOtpError(
+      `${channel === "email" ? "Email" : "Phone number"} is missing on this account.`,
+      "KYC_OTP_DESTINATION_MISSING",
+      400,
+    );
   }
 
   if (alreadyVerified) {
-    throw new Error(`${channel === "email" ? "Email" : "Mobile number"} is already verified.`);
+    throw createKycOtpError(
+      `${channel === "email" ? "Email" : "Mobile number"} is already verified.`,
+      channel === "email" ? "KYC_EMAIL_ALREADY_VERIFIED" : "KYC_MOBILE_ALREADY_VERIFIED",
+      409,
+    );
   }
 
   const now = Date.now();
-  const latest = await repository.findLatestByUser(user.id);
+  let latest;
+  try {
+    latest = await repository.findLatestByUser(user.id);
+  } catch (error) {
+    if (isTransientDatabaseError(error)) {
+      throw createKycOtpError(
+        "Verification service is temporarily unavailable. Please try again shortly.",
+        "KYC_OTP_DATABASE_UNAVAILABLE",
+        503,
+      );
+    }
+    throw error;
+  }
 
   if (latest && !latest.consumedAt) {
     const cooldownUntilMs = latest.cooldownUntil ? new Date(latest.cooldownUntil).getTime() : 0;
     if (cooldownUntilMs > now) {
       const waitSeconds = Math.ceil((cooldownUntilMs - now) / 1000);
-      throw new Error(`Please wait ${waitSeconds}s before requesting another OTP.`);
+      throw createKycOtpError(
+        `Please wait ${waitSeconds}s before requesting another OTP.`,
+        "KYC_OTP_RETRY_TOO_SOON",
+        429,
+      );
     }
 
     if (Number(latest.resendCount || 0) >= Number(latest.maxResends || env.kycOtpMaxResends)) {
-      throw new Error("Maximum resend limit reached. Please try again later.");
+      throw createKycOtpError(
+        "Maximum resend limit reached. Please try again later.",
+        "KYC_OTP_MAX_RESENDS_REACHED",
+        429,
+      );
     }
   }
 
@@ -188,6 +413,18 @@ export const sendContactVerificationOtp = async ({ user, channel }) => {
   let challenge;
   try {
     challenge = await withTransaction(async (db) => {
+      if (channel === "phone" && normalizePhoneInput(user.phone) !== destination) {
+        await usersRepository.updateById(
+          user.id,
+          {
+            phone: destination,
+            phoneVerified: false,
+            phoneVerifiedAt: null,
+          },
+          db,
+        );
+      }
+
       await repository.supersedePendingChallenges(user.id, db);
       const created = await repository.createChallenge(
         {
@@ -205,7 +442,7 @@ export const sendContactVerificationOtp = async ({ user, channel }) => {
 
       await auditLogsRepository.create(
         {
-          action: `kyc_${channel}_otp_sent`,
+          action: `kyc_${channel}_otp_challenge_created`,
           actorId: user.id,
           actorRole: user.role,
           resourceType: "verification",
@@ -222,15 +459,80 @@ export const sendContactVerificationOtp = async ({ user, channel }) => {
     });
   } catch (error) {
     if (error?.code === "23505") {
-      throw new Error("A verification challenge is already active. Please wait before requesting another OTP.");
+      throw createKycOtpError(
+        "A verification challenge is already active. Please wait before requesting another OTP.",
+        "KYC_OTP_ACTIVE_CHALLENGE_EXISTS",
+        429,
+      );
+    }
+    if (isTransientDatabaseError(error)) {
+      throw createKycOtpError(
+        "Verification service is temporarily unavailable. Please try again shortly.",
+        "KYC_OTP_DATABASE_UNAVAILABLE",
+        503,
+      );
     }
     throw error;
   }
 
-  await provider.sendVerification({
+  const maskedDestination = maskOtpDestination(channel, destination);
+  let usedDevFallback = false;
+  logKycOtpInfo("otp_send_attempt", {
+    requestId,
+    channel,
     userId: user.id,
-    destination,
+    challengeId: challenge.id,
+    destination: maskedDestination,
   });
+
+  try {
+    await sendOtpViaChannel({
+      channel,
+      user,
+      destination,
+      otp,
+      requestId,
+    });
+    await repository.markChallengeSent(challenge.id);
+  } catch (error) {
+    const normalizedError = isTransientDatabaseError(error)
+      ? createKycOtpError(
+          "Verification service is temporarily unavailable. Please try again shortly.",
+          "KYC_OTP_DATABASE_UNAVAILABLE",
+          503,
+        )
+      : normalizeDeliveryError(error);
+    logKycOtpError("otp_send_failure", normalizedError, {
+      requestId,
+      channel,
+      userId: user.id,
+      challengeId: challenge.id,
+      destination: maskedDestination,
+      providerReasonCode: normalizedError.code || null,
+    });
+
+    if (env.nodeEnv !== "production" && env.kycOtpDebug) {
+      usedDevFallback = true;
+      console.info(
+        JSON.stringify({
+          level: "info",
+          event: "otp_dev_code_issued",
+          requestId,
+          channel,
+          userId: user.id,
+          challengeId: challenge.id,
+          code: otp,
+        }),
+      );
+    } else {
+      try {
+        await repository.markChallengeDeliveryFailed(challenge.id, normalizedError.code || "delivery_failed");
+      } catch {
+        // Best effort cleanup so a failed send does not leave an active challenge forever.
+      }
+      throw normalizedError;
+    }
+  }
 
   const response = {
     challengeId: challenge.id,
@@ -238,6 +540,15 @@ export const sendContactVerificationOtp = async ({ user, channel }) => {
     cooldownUntil: challenge.cooldownUntil,
     resendCount: challenge.resendCount,
   };
+
+  logKycOtpInfo("otp_send_success", {
+    requestId,
+    channel,
+    userId: user.id,
+    challengeId: challenge.id,
+    destination: maskedDestination,
+    fallback: usedDevFallback ? "dev_debug_code" : null,
+  });
 
   if (env.nodeEnv !== "production" && env.kycOtpDebug) {
     return {
@@ -272,66 +583,112 @@ export const verifyContactOtp = async ({ user, channel, code }) => {
     return (await usersRepository.findById(user.id)) || user;
   }
 
-  const challenge = await repository.findLatestActiveByUser(user.id);
+  let challenge;
+  try {
+    challenge = await repository.findLatestActiveByUser(user.id);
+  } catch (error) {
+    if (isTransientDatabaseError(error)) {
+      throw createKycOtpError(
+        "Verification service is temporarily unavailable. Please try again shortly.",
+        "KYC_OTP_DATABASE_UNAVAILABLE",
+        503,
+      );
+    }
+    throw error;
+  }
 
   if (!challenge) {
-    throw new Error("No active OTP challenge found. Request a new code.");
+    throw createKycOtpError("No active OTP challenge found. Request a new code.", "KYC_OTP_NOT_FOUND", 400);
   }
 
   if (challenge.expiresAt && new Date(challenge.expiresAt).getTime() < Date.now()) {
-    throw new Error("OTP expired. Request a new code.");
+    throw createKycOtpError("OTP expired. Request a new code.", "KYC_OTP_EXPIRED", 400);
   }
 
   if (challenge.status === "blocked" || Number(challenge.attempts || 0) >= Number(challenge.maxAttempts || env.kycOtpMaxAttempts)) {
-    throw new Error("Maximum verification attempts reached. Request a new OTP.");
+    throw createKycOtpError(
+      "Maximum verification attempts reached. Request a new OTP.",
+      "KYC_OTP_MAX_ATTEMPTS_REACHED",
+      429,
+    );
   }
 
-  const incrementedChallenge = await repository.incrementAttempts(challenge.id);
+  let incrementedChallenge;
+  try {
+    incrementedChallenge = await repository.incrementAttempts(challenge.id);
+  } catch (error) {
+    if (isTransientDatabaseError(error)) {
+      throw createKycOtpError(
+        "Verification service is temporarily unavailable. Please try again shortly.",
+        "KYC_OTP_DATABASE_UNAVAILABLE",
+        503,
+      );
+    }
+    throw error;
+  }
+
   const valid = await repository.verifyChallengeCode(incrementedChallenge || challenge, code);
 
   if (!valid) {
     if ((incrementedChallenge?.status || challenge.status) === "blocked") {
-      throw new Error("Maximum verification attempts reached. Request a new OTP.");
+      throw createKycOtpError(
+        "Maximum verification attempts reached. Request a new OTP.",
+        "KYC_OTP_MAX_ATTEMPTS_REACHED",
+        429,
+      );
     }
-    throw new Error("OTP is incorrect.");
+    throw createKycOtpError("OTP is incorrect.", "KYC_OTP_INCORRECT", 400);
   }
 
   const nextStatus = resolvePostVerificationStatus(user, channel);
 
-  const updatedUser = await withTransaction(async (db) => {
-    await repository.consumeChallenge(challenge.id, db);
+  let updatedUser;
+  try {
+    updatedUser = await withTransaction(async (db) => {
+      await repository.consumeChallenge(challenge.id, db);
 
-    const patch = channel === "email"
-      ? {
-          emailVerified: true,
-          emailVerifiedAt: new Date().toISOString(),
-          kycStatus: nextStatus,
-        }
-      : {
-          phoneVerified: true,
-          phoneVerifiedAt: new Date().toISOString(),
-          kycStatus: nextStatus,
-        };
+      const patch = channel === "email"
+        ? {
+            emailVerified: true,
+            emailVerifiedAt: new Date().toISOString(),
+            kycStatus: nextStatus,
+          }
+        : {
+            phone: normalizePhoneInput(challenge.phone) || normalizePhoneInput(user.phone) || user.phone || null,
+            phoneVerified: true,
+            phoneVerifiedAt: new Date().toISOString(),
+            kycStatus: nextStatus,
+          };
 
-    const updated = await usersRepository.updateById(user.id, patch, db);
+      const updated = await usersRepository.updateById(user.id, patch, db);
 
-    await auditLogsRepository.create(
-      {
-        action: channel === "email" ? "kyc_email_verified" : "kyc_mobile_verified",
-        actorId: user.id,
-        actorRole: user.role,
-        resourceType: "user",
-        resourceId: user.id,
-        metadata: {
-          channel,
-          status: nextStatus,
+      await auditLogsRepository.create(
+        {
+          action: channel === "email" ? "kyc_email_verified" : "kyc_mobile_verified",
+          actorId: user.id,
+          actorRole: user.role,
+          resourceType: "user",
+          resourceId: user.id,
+          metadata: {
+            channel,
+            status: nextStatus,
+          },
         },
-      },
-      db,
-    );
+        db,
+      );
 
-    return updated;
-  });
+      return updated;
+    });
+  } catch (error) {
+    if (isTransientDatabaseError(error)) {
+      throw createKycOtpError(
+        "Verification service is temporarily unavailable. Please try again shortly.",
+        "KYC_OTP_DATABASE_UNAVAILABLE",
+        503,
+      );
+    }
+    throw error;
+  }
 
   return updatedUser;
 };

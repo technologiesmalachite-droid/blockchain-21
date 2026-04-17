@@ -12,12 +12,14 @@ export type ApiRequestOptions = Omit<RequestInit, "body"> & {
 export class ApiRequestError extends Error {
   status: number;
   code: "unauthorized" | "forbidden" | "network_error" | "request_failed";
+  responseBody: unknown;
 
-  constructor(message: string, status = 0, code: ApiRequestError["code"] = "request_failed") {
+  constructor(message: string, status = 0, code: ApiRequestError["code"] = "request_failed", responseBody: unknown = null) {
     super(message);
     this.name = "ApiRequestError";
     this.status = status;
     this.code = code;
+    this.responseBody = responseBody;
   }
 }
 
@@ -67,7 +69,10 @@ const getApiErrorMessage = async (response: Response) => {
   const fallback = toPublicErrorMessage(response.status);
   const payload = await parseJson<{ message?: string }>(response);
   const message = typeof payload?.message === "string" ? payload.message.trim() : "";
-  return message || fallback;
+  return {
+    message: message || fallback,
+    payload,
+  };
 };
 
 const parseJson = async <T>(response: Response): Promise<T> => {
@@ -280,7 +285,7 @@ export const apiRequest = async <T>(path: string, options: ApiRequestOptions = {
   }
 
   if (response.status === 401) {
-    const message = await getApiErrorMessage(response);
+    const { message, payload } = await getApiErrorMessage(response);
     logAuthDebug("response_unauthorized", {
       path,
       status: response.status,
@@ -289,24 +294,35 @@ export const apiRequest = async <T>(path: string, options: ApiRequestOptions = {
 
     if (authMode === "required") {
       handleAuthFailure(message || "Your session expired. Please sign in to continue.");
-      throw new ApiRequestError(message || "Authentication required.", response.status, "unauthorized");
+      throw new ApiRequestError(message || "Authentication required.", response.status, "unauthorized", payload);
     }
 
-    throw new ApiRequestError(message || "You are not authorized to access this resource.", response.status, "unauthorized");
+    throw new ApiRequestError(
+      message || "You are not authorized to access this resource.",
+      response.status,
+      "unauthorized",
+      payload,
+    );
   }
 
   if (response.status === 403) {
-    const message = await getApiErrorMessage(response);
+    const { message, payload } = await getApiErrorMessage(response);
     logAuthDebug("response_forbidden", {
       path,
       status: response.status,
       message,
     });
-    throw new ApiRequestError(message || "You do not have permission to access this resource.", response.status, "forbidden");
+    throw new ApiRequestError(
+      message || "You do not have permission to access this resource.",
+      response.status,
+      "forbidden",
+      payload,
+    );
   }
 
   if (!response.ok) {
-    throw new ApiRequestError(await getApiErrorMessage(response), response.status, "request_failed");
+    const { message, payload } = await getApiErrorMessage(response);
+    throw new ApiRequestError(message, response.status, "request_failed", payload);
   }
 
   return parseJson<T>(response);

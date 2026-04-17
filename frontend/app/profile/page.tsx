@@ -155,7 +155,11 @@ export default function ProfilePage() {
         antiPhishingCode: antiPhishingCode.trim() || undefined,
       });
       setState((current) => ({ ...current, user: payload.user }));
+      setFullName(payload.user.fullName || "");
+      setCountryCode(payload.user.countryCode || "US");
+      setAntiPhishingCode(payload.user.antiPhishingCode || "");
       submitToast("Profile updated", payload.message || "Profile information has been updated.");
+      await loadProfile();
     } catch (error) {
       submitToast("Update failed", extractBackendErrorMessage(error) || "Unable to update profile.");
     } finally {
@@ -374,7 +378,7 @@ export default function ProfilePage() {
                         value={countryCode}
                         onChange={(event) => setCountryCode(event.target.value.toUpperCase())}
                         maxLength={2}
-                        placeholder="Country"
+                        placeholder="Country code (US)"
                         className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-white"
                       />
                       <input

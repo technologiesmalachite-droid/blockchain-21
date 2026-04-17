@@ -98,6 +98,39 @@ const createRepository = ({ tableName, destinationColumn }) => ({
     return toCamelRows(rows)[0] || null;
   },
 
+  async markChallengeSent(id, db = { query }) {
+    const { rows } = await db.query(
+      `UPDATE ${tableName}
+       SET status = 'sent',
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
+  async markChallengeDeliveryFailed(id, reason, db = { query }) {
+    const metadataPatch = {
+      deliveryFailureReason: reason || "delivery_failed",
+      deliveryFailedAt: new Date().toISOString(),
+    };
+
+    const { rows } = await db.query(
+      `UPDATE ${tableName}
+       SET status = 'failed',
+           consumed_at = NOW(),
+           metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [id, asJson(metadataPatch)],
+    );
+
+    return toCamelRows(rows)[0] || null;
+  },
+
   async supersedePendingChallenges(userId, db = { query }) {
     await db.query(
       `UPDATE ${tableName}
