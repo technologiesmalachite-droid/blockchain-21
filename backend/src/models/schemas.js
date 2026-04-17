@@ -501,6 +501,12 @@ export const otpCodeSchema = z.object({
   params: z.object({}).optional(),
 });
 
+export const kycEmailOtpSendSchema = z.object({
+  body: z.object({}).optional(),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
 export const firebaseSessionSchema = z.object({
   body: z.object({
     idToken: z.string().min(32),

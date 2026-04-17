@@ -16,6 +16,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { requireActiveAccount, requireConsents } from "../middleware/security.js";
 import { validate } from "../middleware/validate.js";
 import {
+  kycEmailOtpSendSchema,
   kycDocumentIdSchema,
   kycOptionsSchema,
   kycProfileSubmissionSchema,
@@ -29,7 +30,7 @@ import { kycDocumentUploadSafe } from "../middleware/kycUpload.js";
 const router = Router();
 
 router.get("/options/:countryCode", requireAuth, requireActiveAccount, validate(kycOptionsSchema), asyncHandler(getKycOptions));
-router.post("/email/send-otp", requireAuth, requireActiveAccount, otpSendLimiter, asyncHandler(sendEmailOtp));
+router.post("/email/send-otp", requireAuth, requireActiveAccount, otpSendLimiter, validate(kycEmailOtpSendSchema), asyncHandler(sendEmailOtp));
 router.post("/email/verify-otp", requireAuth, requireActiveAccount, otpVerifyLimiter, validate(otpCodeSchema), asyncHandler(verifyEmailOtp));
 router.post("/mobile/send-otp", requireAuth, requireActiveAccount, otpSendLimiter, asyncHandler(sendMobileOtp));
 router.post("/mobile/verify-otp", requireAuth, requireActiveAccount, otpVerifyLimiter, validate(otpCodeSchema), asyncHandler(verifyMobileOtp));

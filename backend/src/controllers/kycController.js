@@ -118,9 +118,17 @@ export const getKycOptions = (req, res) => {
 };
 
 export const sendEmailOtp = async (req, res) => {
+  const email = String(req.user?.email || "").trim().toLowerCase();
+  if (!req.user || !email) {
+    return res.status(401).json({ message: "Session is invalid. Please sign in again." });
+  }
+
   try {
     const result = await sendContactVerificationOtp({
-      user: req.user,
+      user: {
+        ...req.user,
+        email,
+      },
       channel: "email",
       requestId: req.requestId || null,
     });
