@@ -195,11 +195,11 @@ console.info(
 
 if (nodeEnv === "production") {
   if (!authEmailOtpFromEmail) {
-    throw new Error("EMAIL_FROM (or AUTH_EMAIL_OTP_FROM_EMAIL) is required for email OTP delivery.");
+    configurationWarnings.push("EMAIL_FROM (or AUTH_EMAIL_OTP_FROM_EMAIL) is required for email OTP delivery.");
   }
 
   if (!smtpHost || !smtpUser || !smtpPass) {
-    throw new Error("SMTP_HOST, SMTP_USER, and SMTP_PASS are required for email OTP delivery.");
+    configurationWarnings.push("SMTP_HOST/SMTP_USER/SMTP_PASS are required for SMTP email OTP delivery.");
   }
 } else {
   if (!smtpHost || !smtpUser || !smtpPass) {
@@ -323,6 +323,12 @@ export const env = {
   tradeOrderRateLimitMax: parsePositiveNumber(process.env.TRADE_ORDER_RATE_LIMIT_MAX, 30),
   tradeCancelRateLimitWindowMs: parsePositiveNumber(process.env.TRADE_CANCEL_RATE_LIMIT_WINDOW, 60000),
   tradeCancelRateLimitMax: parsePositiveNumber(process.env.TRADE_CANCEL_RATE_LIMIT_MAX, 60),
+  p2pOrderRateLimitWindowMs: parsePositiveNumber(process.env.P2P_ORDER_RATE_LIMIT_WINDOW, 60000),
+  p2pOrderRateLimitMax: parsePositiveNumber(process.env.P2P_ORDER_RATE_LIMIT_MAX, 20),
+  p2pOrderActionRateLimitWindowMs: parsePositiveNumber(process.env.P2P_ORDER_ACTION_RATE_LIMIT_WINDOW, 60000),
+  p2pOrderActionRateLimitMax: parsePositiveNumber(process.env.P2P_ORDER_ACTION_RATE_LIMIT_MAX, 30),
+  p2pMessageRateLimitWindowMs: parsePositiveNumber(process.env.P2P_MESSAGE_RATE_LIMIT_WINDOW, 60000),
+  p2pMessageRateLimitMax: parsePositiveNumber(process.env.P2P_MESSAGE_RATE_LIMIT_MAX, 40),
   walletSwapFeeBps: parsePositiveNumber(process.env.WALLET_SWAP_FEE_BPS, 20),
   walletSwapQuoteTtlSeconds: parsePositiveNumber(process.env.WALLET_SWAP_QUOTE_TTL_SECONDS, 60),
   walletWithdrawalFeeBps: parsePositiveNumber(process.env.WALLET_WITHDRAWAL_FEE_BPS, 10),

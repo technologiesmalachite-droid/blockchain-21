@@ -9,6 +9,7 @@ const AUTH_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password"];
 const PRIVATE_PREFIXES = [
   "/wallet",
   "/orders",
+  "/p2p",
   "/profile",
   "/admin",
   "/kyc",
@@ -60,6 +61,7 @@ export const config = {
     "/reset-password",
     "/wallet/:path*",
     "/orders/:path*",
+    "/p2p/:path*",
     "/profile/:path*",
     "/admin/:path*",
     "/kyc/:path*",

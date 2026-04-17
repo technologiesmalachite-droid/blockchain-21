@@ -1017,3 +1017,314 @@ export const fetchPaymentIntents = () =>
   apiRequest<{ items: Array<Record<string, unknown>> }>("/payments/intents", {
     auth: "required",
   });
+
+export type P2PPaymentMethod = {
+  id: string;
+  methodType: "bank_transfer" | "upi" | "manual";
+  label: string;
+  accountName: string;
+  accountNumberMasked?: string | null;
+  upiIdMasked?: string | null;
+  metadata?: Record<string, unknown>;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type P2POffer = {
+  id: string;
+  advertiser: {
+    userId: string;
+    nickname: string;
+    completionRate: number | null;
+    totalTrades: number;
+  };
+  tradeType: "buy" | "sell";
+  takerSide: "buy" | "sell";
+  assetCode: string;
+  fiatCurrency: string;
+  walletType: "spot" | "funding";
+  priceType: "fixed";
+  price: number;
+  totalQuantity: number;
+  remainingQuantity: number;
+  minAmount: number;
+  maxAmount: number;
+  terms?: string | null;
+  status: string;
+  autoCancelMinutes: number;
+  paymentMethods: Array<{
+    id: string;
+    type: string;
+    label: string;
+    accountName?: string;
+    accountNumberMasked?: string;
+    upiIdMasked?: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type P2POrderMessage = {
+  id: string;
+  orderId: string;
+  senderUserId?: string | null;
+  senderNickname?: string | null;
+  messageType: "SYSTEM" | "USER";
+  body: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type P2PDispute = {
+  id: string;
+  orderId: string;
+  openedByUserId: string;
+  status: string;
+  reason: string;
+  resolutionNotes?: string | null;
+  internalNotes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type P2POrder = {
+  id: string;
+  offerId: string;
+  offerTradeType: "buy" | "sell";
+  role: "buyer" | "seller";
+  counterparty: {
+    id: string;
+    nickname: string;
+  };
+  buyerUserId: string;
+  sellerUserId: string;
+  assetCode: string;
+  fiatCurrency: string;
+  walletType: "spot" | "funding";
+  unitPrice: number;
+  cryptoAmount: number;
+  fiatAmount: number;
+  status: "PENDING_PAYMENT" | "PAID" | "RELEASED" | "CANCELLED" | "DISPUTED" | "EXPIRED";
+  expiresAt: string;
+  markedPaidAt?: string | null;
+  releasedAt?: string | null;
+  cancelledAt?: string | null;
+  disputeOpenedAt?: string | null;
+  cancelReason?: string | null;
+  paymentMethod?: {
+    id: string;
+    type: string;
+    label: string;
+    accountName?: string | null;
+    accountNumberMasked?: string | null;
+    upiIdMasked?: string | null;
+    metadata?: Record<string, unknown>;
+  } | null;
+  offerTerms?: string | null;
+  offerPaymentMethods?: Array<Record<string, unknown>>;
+  messages?: P2POrderMessage[];
+  dispute?: P2PDispute | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type P2PMarketplaceResponse = {
+  items: P2POffer[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+  filters: {
+    side: "buy" | "sell";
+    assetCode?: string | null;
+    fiatCurrency?: string | null;
+    paymentMethodType?: string | null;
+  };
+};
+
+export const fetchP2pConfig = () =>
+  apiRequest<{
+    config: {
+      assets: string[];
+      fiatCurrencies: string[];
+      paymentMethodTypes: string[];
+      orderStatuses: string[];
+    };
+  }>("/p2p/config", {
+    auth: "required",
+  });
+
+export const fetchP2pMarketplaceOffers = (params?: {
+  side?: "buy" | "sell";
+  assetCode?: string;
+  fiatCurrency?: string;
+  paymentMethodType?: "bank_transfer" | "upi" | "manual";
+  page?: number;
+  pageSize?: number;
+}) => {
+  const search = new URLSearchParams();
+  if (params?.side) search.set("side", params.side);
+  if (params?.assetCode) search.set("assetCode", params.assetCode);
+  if (params?.fiatCurrency) search.set("fiatCurrency", params.fiatCurrency);
+  if (params?.paymentMethodType) search.set("paymentMethodType", params.paymentMethodType);
+  if (params?.page) search.set("page", String(params.page));
+  if (params?.pageSize) search.set("pageSize", String(params.pageSize));
+
+  return apiRequest<P2PMarketplaceResponse>(`/p2p/marketplace/offers${search.toString() ? `?${search.toString()}` : ""}`, {
+    auth: "required",
+  });
+};
+
+export const fetchMyP2pOffers = () =>
+  apiRequest<{ items: P2POffer[] }>("/p2p/offers/mine", {
+    auth: "required",
+  });
+
+export const createP2pOffer = (payload: {
+  tradeType: "buy" | "sell";
+  assetCode: string;
+  fiatCurrency: string;
+  walletType?: "spot" | "funding";
+  pricingType?: "fixed";
+  price: number;
+  totalQuantity: number;
+  minAmount: number;
+  maxAmount: number;
+  paymentMethodIds: string[];
+  terms?: string;
+  autoCancelMinutes?: number;
+}) =>
+  apiRequest<{ message: string; offer: P2POffer }>("/p2p/offers", {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });
+
+export const fetchP2pOffer = (offerId: string) =>
+  apiRequest<{ offer: P2POffer }>(`/p2p/offers/${encodeURIComponent(offerId)}`, {
+    auth: "required",
+  });
+
+export const updateP2pOfferStatus = (offerId: string, status: "ACTIVE" | "PAUSED" | "CLOSED" | "CANCELLED") =>
+  apiRequest<{ message: string; offer: P2POffer }>(`/p2p/offers/${encodeURIComponent(offerId)}/status`, {
+    auth: "required",
+    method: "PATCH",
+    body: { status },
+  });
+
+export const fetchP2pPaymentMethods = (includeInactive = false) =>
+  apiRequest<{ items: P2PPaymentMethod[] }>(`/p2p/payment-methods${includeInactive ? "?includeInactive=true" : ""}`, {
+    auth: "required",
+  });
+
+export const createP2pPaymentMethod = (payload: {
+  methodType: "bank_transfer" | "upi" | "manual";
+  label: string;
+  accountName: string;
+  accountNumber?: string;
+  upiId?: string;
+  metadata?: Record<string, unknown>;
+}) =>
+  apiRequest<{ message: string; method: P2PPaymentMethod }>("/p2p/payment-methods", {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });
+
+export const updateP2pPaymentMethod = (
+  methodId: string,
+  payload: {
+    methodType?: "bank_transfer" | "upi" | "manual";
+    label?: string;
+    accountName?: string;
+    accountNumber?: string;
+    upiId?: string;
+    isActive?: boolean;
+    metadata?: Record<string, unknown>;
+  },
+) =>
+  apiRequest<{ message: string; method: P2PPaymentMethod }>(`/p2p/payment-methods/${encodeURIComponent(methodId)}`, {
+    auth: "required",
+    method: "PUT",
+    body: payload,
+  });
+
+export const deleteP2pPaymentMethod = (methodId: string) =>
+  apiRequest<{ message: string; method: P2PPaymentMethod }>(`/p2p/payment-methods/${encodeURIComponent(methodId)}`, {
+    auth: "required",
+    method: "DELETE",
+  });
+
+export const createP2pOrder = (offerId: string, payload: { fiatAmount: number; paymentMethodId?: string }) =>
+  apiRequest<{ message: string; order: P2POrder }>(`/p2p/offers/${encodeURIComponent(offerId)}/orders`, {
+    auth: "required",
+    method: "POST",
+    body: payload,
+  });
+
+export const fetchP2pOrders = (params?: { status?: P2POrder["status"]; page?: number; pageSize?: number }) => {
+  const search = new URLSearchParams();
+  if (params?.status) search.set("status", params.status);
+  if (params?.page) search.set("page", String(params.page));
+  if (params?.pageSize) search.set("pageSize", String(params.pageSize));
+
+  return apiRequest<{
+    items: P2POrder[];
+    pagination: {
+      page: number;
+      pageSize: number;
+      total: number;
+      totalPages: number;
+    };
+  }>(`/p2p/orders${search.toString() ? `?${search.toString()}` : ""}`, {
+    auth: "required",
+  });
+};
+
+export const fetchP2pOrder = (orderId: string) =>
+  apiRequest<{ order: P2POrder }>(`/p2p/orders/${encodeURIComponent(orderId)}`, {
+    auth: "required",
+  });
+
+export const markP2pOrderPaid = (orderId: string) =>
+  apiRequest<{ message: string; order: P2POrder }>(`/p2p/orders/${encodeURIComponent(orderId)}/mark-paid`, {
+    auth: "required",
+    method: "POST",
+    body: {},
+  });
+
+export const releaseP2pOrder = (orderId: string) =>
+  apiRequest<{ message: string; order: P2POrder }>(`/p2p/orders/${encodeURIComponent(orderId)}/release`, {
+    auth: "required",
+    method: "POST",
+    body: {},
+  });
+
+export const cancelP2pOrder = (orderId: string, reason?: string) =>
+  apiRequest<{ message: string; order: P2POrder }>(`/p2p/orders/${encodeURIComponent(orderId)}/cancel`, {
+    auth: "required",
+    method: "POST",
+    body: reason ? { reason } : {},
+  });
+
+export const openP2pDispute = (orderId: string, reason: string) =>
+  apiRequest<{ message: string; order: P2POrder }>(`/p2p/orders/${encodeURIComponent(orderId)}/dispute`, {
+    auth: "required",
+    method: "POST",
+    body: { reason },
+  });
+
+export const fetchP2pOrderMessages = (orderId: string) =>
+  apiRequest<{ items: P2POrderMessage[] }>(`/p2p/orders/${encodeURIComponent(orderId)}/messages`, {
+    auth: "required",
+  });
+
+export const sendP2pOrderMessage = (orderId: string, body: string) =>
+  apiRequest<{ message: string; item: P2POrderMessage }>(`/p2p/orders/${encodeURIComponent(orderId)}/messages`, {
+    auth: "required",
+    method: "POST",
+    body: { body },
+  });

@@ -108,6 +108,36 @@ export const tradeCancelLimiter = rateLimit({
   handler: jsonRateLimitHandler("Too many cancel requests. Please wait before trying again."),
 });
 
+export const p2pOrderCreateLimiter = rateLimit({
+  windowMs: env.p2pOrderRateLimitWindowMs,
+  limit: env.p2pOrderRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: userAwareKeyGenerator,
+  handler: jsonRateLimitHandler("Too many P2P order requests. Please wait before creating another order."),
+});
+
+export const p2pOrderActionLimiter = rateLimit({
+  windowMs: env.p2pOrderActionRateLimitWindowMs,
+  limit: env.p2pOrderActionRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: userAwareKeyGenerator,
+  handler: jsonRateLimitHandler("Too many P2P order actions. Please try again shortly."),
+});
+
+export const p2pMessageLimiter = rateLimit({
+  windowMs: env.p2pMessageRateLimitWindowMs,
+  limit: env.p2pMessageRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  keyGenerator: userAwareKeyGenerator,
+  handler: jsonRateLimitHandler("Too many P2P chat messages. Please slow down and retry."),
+});
+
 export const walletActionLimiter = rateLimit({
   windowMs: env.walletActionRateLimitWindowMs,
   limit: env.walletActionRateLimitMax,

@@ -118,8 +118,15 @@ export const getKycOptions = (req, res) => {
 };
 
 export const sendEmailOtp = async (req, res) => {
-  const email = String(req.user?.email || "").trim().toLowerCase();
-  if (!req.user || !email) {
+  if (!req.user) {
+    return res.status(401).json({ message: "Session is invalid. Please sign in again." });
+  }
+
+  const sessionEmail = String(req.session?.email || "").trim().toLowerCase();
+  const userEmail = String(req.user.email || "").trim().toLowerCase();
+  const email = userEmail || sessionEmail;
+
+  if (!email) {
     return res.status(401).json({ message: "Session is invalid. Please sign in again." });
   }
 

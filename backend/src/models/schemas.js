@@ -598,3 +598,213 @@ export const accountRestrictionSchema = z.object({
   query: z.object({}).optional(),
   params: z.object({}).optional(),
 });
+
+const normalizedP2pSideSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  z.enum(["buy", "sell"]),
+);
+
+const normalizedP2pMethodTypeSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  z.enum(["bank_transfer", "upi", "manual"]),
+);
+
+const p2pNumericInputSchema = z.preprocess(toNumberInput, z.number().positive());
+
+export const p2pMarketplaceQuerySchema = z.object({
+  query: z.object({
+    side: normalizedP2pSideSchema.optional(),
+    assetCode: z.string().trim().min(2).max(20).optional(),
+    fiatCurrency: z.string().trim().min(3).max(10).optional(),
+    paymentMethodType: normalizedP2pMethodTypeSchema.optional(),
+    page: queryOptionalPositiveIntSchema,
+    pageSize: queryOptionalPositiveIntSchema,
+  }).optional(),
+  params: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const p2pOfferIdSchema = z.object({
+  params: z.object({
+    offerId: z.string().uuid(),
+  }),
+  query: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const p2pMethodIdSchema = z.object({
+  params: z.object({
+    methodId: z.string().uuid(),
+  }),
+  query: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const p2pOrderIdSchema = z.object({
+  params: z.object({
+    orderId: z.string().uuid(),
+  }),
+  query: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const p2pCreateOfferSchema = z.object({
+  body: z.object({
+    tradeType: normalizedP2pSideSchema,
+    assetCode: z.string().trim().min(2).max(20),
+    fiatCurrency: z.string().trim().min(3).max(10),
+    walletType: z.enum(["spot", "funding"]).optional(),
+    pricingType: z.preprocess(
+      (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+      z.enum(["fixed"]).optional(),
+    ),
+    price: p2pNumericInputSchema,
+    totalQuantity: p2pNumericInputSchema,
+    minAmount: p2pNumericInputSchema,
+    maxAmount: p2pNumericInputSchema,
+    paymentMethodIds: z.array(z.string().uuid()).min(1),
+    terms: z.string().trim().max(2000).optional(),
+    autoCancelMinutes: z.preprocess(
+      (value) => (value === undefined || value === null || value === "" ? undefined : toNumberInput(value)),
+      z.number().int().min(5).max(120).optional(),
+    ),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+}).superRefine((value, ctx) => {
+  if (value.body.maxAmount < value.body.minAmount) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["body", "maxAmount"],
+      message: "Maximum amount must be greater than or equal to minimum amount.",
+    });
+  }
+});
+
+export const p2pStatusUpdateSchema = z.object({
+  params: z.object({
+    offerId: z.string().uuid(),
+  }),
+  body: z.object({
+    status: z.preprocess(
+      (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
+      z.enum(["ACTIVE", "PAUSED", "CLOSED", "CANCELLED"]),
+    ),
+  }),
+  query: z.object({}).optional(),
+});
+
+export const p2pCreateOrderSchema = z.object({
+  params: z.object({
+    offerId: z.string().uuid(),
+  }),
+  body: z.object({
+    fiatAmount: p2pNumericInputSchema,
+    paymentMethodId: z.string().uuid().optional(),
+  }),
+  query: z.object({}).optional(),
+});
+
+export const p2pOrderListQuerySchema = z.object({
+  query: z.object({
+    status: z.preprocess(
+      (value) => (typeof value === "string" ? value.trim().toUpperCase() : value),
+      z.enum(["PENDING_PAYMENT", "PAID", "RELEASED", "CANCELLED", "DISPUTED", "EXPIRED"]).optional(),
+    ),
+    page: queryOptionalPositiveIntSchema,
+    pageSize: queryOptionalPositiveIntSchema,
+  }).optional(),
+  params: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+export const p2pCancelOrderSchema = z.object({
+  params: z.object({
+    orderId: z.string().uuid(),
+  }),
+  body: z.object({
+    reason: z.string().trim().max(500).optional(),
+  }).optional(),
+  query: z.object({}).optional(),
+});
+
+export const p2pDisputeSchema = z.object({
+  params: z.object({
+    orderId: z.string().uuid(),
+  }),
+  body: z.object({
+    reason: z.string().trim().min(5).max(1000),
+  }),
+  query: z.object({}).optional(),
+});
+
+export const p2pMessageSchema = z.object({
+  params: z.object({
+    orderId: z.string().uuid(),
+  }),
+  body: z.object({
+    body: z.string().trim().min(1).max(2000),
+  }),
+  query: z.object({}).optional(),
+});
+
+export const p2pPaymentMethodSchema = z.object({
+  body: z.object({
+    methodType: normalizedP2pMethodTypeSchema,
+    label: z.string().trim().min(2).max(80),
+    accountName: z.string().trim().min(2).max(120),
+    accountNumber: z.string().trim().min(4).max(40).optional(),
+    upiId: z.string().trim().min(3).max(120).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  }),
+  query: z.object({}).optional(),
+  params: z.object({}).optional(),
+}).superRefine((value, ctx) => {
+  if (value.body.methodType === "bank_transfer" && !value.body.accountNumber) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["body", "accountNumber"],
+      message: "Account number is required for bank transfer.",
+    });
+  }
+
+  if (value.body.methodType === "upi" && !value.body.upiId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["body", "upiId"],
+      message: "UPI ID is required for UPI payment method.",
+    });
+  }
+});
+
+export const p2pPaymentMethodUpdateSchema = z.object({
+  params: z.object({
+    methodId: z.string().uuid(),
+  }),
+  body: z.object({
+    methodType: normalizedP2pMethodTypeSchema.optional(),
+    label: z.string().trim().min(2).max(80).optional(),
+    accountName: z.string().trim().min(2).max(120).optional(),
+    accountNumber: z.string().trim().min(4).max(40).optional(),
+    upiId: z.string().trim().min(3).max(120).optional(),
+    isActive: z.preprocess(
+      (value) => (value === undefined || value === null || value === "" ? undefined : toBooleanInput(value)),
+      z.boolean().optional(),
+    ),
+    metadata: z.record(z.unknown()).optional(),
+  }).refine((value) => Object.values(value).some((item) => item !== undefined), {
+    message: "At least one field is required to update payment method.",
+  }),
+  query: z.object({}).optional(),
+});
+
+export const p2pPaymentMethodsQuerySchema = z.object({
+  query: z.object({
+    includeInactive: z.preprocess(
+      (value) => (value === undefined || value === null || value === "" ? undefined : toBooleanInput(value)),
+      z.boolean().optional(),
+    ),
+  }).optional(),
+  params: z.object({}).optional(),
+  body: z.object({}).optional(),
+});

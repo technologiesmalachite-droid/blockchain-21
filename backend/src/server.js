@@ -12,6 +12,7 @@ import kycRoutes from "./routes/kycRoutes.js";
 import marketRoutes from "./routes/marketRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
+import p2pRoutes from "./routes/p2pRoutes.js";
 import supportRoutes from "./routes/supportRoutes.js";
 import tradeRoutes from "./routes/tradeRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -122,6 +123,7 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/kyc", kycRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/p2p", p2pRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/support", supportRoutes);
 
