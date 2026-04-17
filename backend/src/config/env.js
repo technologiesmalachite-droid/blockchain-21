@@ -87,15 +87,15 @@ const parseSameSite = (value, fallback = "lax") => {
 
 const parseAuthEmailProvider = (value) => {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (normalized === "resend") {
-    return "resend";
+  if (normalized === "resend" || normalized === "smtp") {
+    return normalized;
   }
 
   if (!normalized) {
-    return "resend";
+    return "smtp";
   }
 
-  throw new Error("AUTH_EMAIL_PROVIDER must be set to 'resend'.");
+  throw new Error("AUTH_EMAIL_PROVIDER must be set to 'smtp' or 'resend'.");
 };
 
 const parseWalletDepositProvider = (value) => {
@@ -154,10 +154,15 @@ const kycAllowedMimeTypes = parseCsv(process.env.KYC_ALLOWED_MIME_TYPES, [
   "image/webp",
   "application/pdf",
 ]);
-const authEmailProvider = parseAuthEmailProvider(process.env.AUTH_EMAIL_PROVIDER || process.env.AUTH_EMAIL_OTP_PROVIDER || "resend");
+const authEmailProvider = parseAuthEmailProvider(process.env.AUTH_EMAIL_PROVIDER || process.env.AUTH_EMAIL_OTP_PROVIDER || "smtp");
 const authEmailOtpResendApiKey = process.env.RESEND_API_KEY || "";
 const authEmailOtpFromEmail = process.env.AUTH_EMAIL_OTP_FROM_EMAIL || process.env.EMAIL_FROM || "";
 const authEmailOtpFromName = process.env.AUTH_EMAIL_OTP_FROM_NAME || "MalachiteX Security";
+const smtpHost = String(process.env.SMTP_HOST || "").trim();
+const smtpPort = parsePositiveNumber(process.env.SMTP_PORT, 465);
+const smtpSecure = parseBoolean(process.env.SMTP_SECURE, smtpPort === 465);
+const smtpUser = String(process.env.SMTP_USER || "").trim();
+const smtpPass = String(process.env.SMTP_PASS || "").trim();
 const walletDepositProvider = parseWalletDepositProvider(process.env.WALLET_DEPOSIT_PROVIDER);
 const walletDepositWebhookSecret = process.env.WALLET_DEPOSIT_WEBHOOK_SECRET || "";
 const walletDepositWebhookSignatureHeader = (process.env.WALLET_DEPOSIT_WEBHOOK_SIGNATURE_HEADER || "x-wallet-signature")
@@ -179,22 +184,26 @@ console.info(
     level: "info",
     event: "auth_email_provider_config",
     provider: authEmailProvider,
+    smtpHostConfigured: Boolean(smtpHost),
+    smtpPort,
+    smtpSecure,
+    smtpUserConfigured: Boolean(smtpUser),
     resendApiKey: maskApiKey(authEmailOtpResendApiKey),
     hasEmailFrom: Boolean(authEmailOtpFromEmail),
   }),
 );
 
 if (nodeEnv === "production") {
-  if (!authEmailOtpResendApiKey) {
-    throw new Error("RESEND_API_KEY is required for email OTP delivery.");
-  }
-
   if (!authEmailOtpFromEmail) {
     throw new Error("EMAIL_FROM (or AUTH_EMAIL_OTP_FROM_EMAIL) is required for email OTP delivery.");
   }
+
+  if (!smtpHost || !smtpUser || !smtpPass) {
+    throw new Error("SMTP_HOST, SMTP_USER, and SMTP_PASS are required for email OTP delivery.");
+  }
 } else {
-  if (!authEmailOtpResendApiKey) {
-    configurationWarnings.push("RESEND_API_KEY is not set. Email OTP delivery may fail; use debug OTP fallback for local testing.");
+  if (!smtpHost || !smtpUser || !smtpPass) {
+    configurationWarnings.push("SMTP_HOST/SMTP_USER/SMTP_PASS are not set. Email OTP delivery may fail; use debug OTP fallback for local testing.");
   }
 
   if (!authEmailOtpFromEmail) {
@@ -223,13 +232,13 @@ if (nodeEnv === "production" && !databaseUrl) {
   configurationWarnings.push("DATABASE_URL is not configured for production.");
 }
 
-if (nodeEnv === "production" && authEmailProvider === "resend") {
-  if (!authEmailOtpResendApiKey) {
-    configurationWarnings.push("RESEND_API_KEY is not configured for production.");
-  }
-
+if (nodeEnv === "production") {
   if (!authEmailOtpFromEmail) {
     configurationWarnings.push("EMAIL_FROM (or AUTH_EMAIL_OTP_FROM_EMAIL) is not configured for production.");
+  }
+
+  if (!smtpHost || !smtpUser || !smtpPass) {
+    configurationWarnings.push("SMTP_HOST/SMTP_USER/SMTP_PASS are not configured for production.");
   }
 }
 
@@ -294,6 +303,11 @@ export const env = {
   authEmailOtpResendApiKey,
   authEmailOtpFromEmail,
   authEmailOtpFromName,
+  smtpHost,
+  smtpPort,
+  smtpSecure,
+  smtpUser,
+  smtpPass,
   authEmailOtpDebugLogCode: parseBoolean(process.env.AUTH_EMAIL_OTP_DEBUG_LOG_CODE, false),
   authEmailOtpSendTimeoutMs: parsePositiveNumber(process.env.AUTH_EMAIL_OTP_SEND_TIMEOUT_MS, 10000),
   authPasswordResetTokenTtlMinutes: parsePositiveNumber(process.env.AUTH_PASSWORD_RESET_TOKEN_TTL_MINUTES, 20),

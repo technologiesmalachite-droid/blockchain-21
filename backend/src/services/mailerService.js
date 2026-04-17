@@ -1,228 +1,98 @@
+import nodemailer from "nodemailer";
 import { env } from "../config/env.js";
-import { Resend } from "resend";
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 
-const maskEmail = (email) => {
-  const normalized = normalizeEmail(email);
-  const [localPart, domain] = normalized.split("@");
-  if (!localPart || !domain) {
-    return "unknown";
-  }
-
-  if (localPart.length <= 2) {
-    return `${localPart[0] || "*"}***@${domain}`;
-  }
-
-  return `${localPart.slice(0, 2)}***@${domain}`;
+const extractOtpCode = ({ text, html }) => {
+  const merged = `${String(text || "")} ${String(html || "")}`;
+  const match = merged.match(/\b([0-9]{6})\b/);
+  return match ? match[1] : "";
 };
 
-const logInfo = (event, metadata = {}) => {
-  console.info(
-    JSON.stringify({
-      level: "info",
-      event,
-      ...metadata,
-    }),
-  );
+const buildOtpHtml = (otpCode, fallbackHtml = "") => {
+  if (otpCode) {
+    return `
+      <div style="font-family:Arial,sans-serif;line-height:1.6;color:#0f172a">
+        <h2 style="margin:0 0 12px 0;">Your OTP Code</h2>
+        <p style="margin:0 0 8px 0;">Use this code to continue:</p>
+        <p style="margin:0 0 12px 0;font-size:22px;font-weight:700;letter-spacing:1px;">${otpCode}</p>
+        <p style="margin:0;">If you did not request this code, you can safely ignore this email.</p>
+      </div>
+    `;
+  }
+
+  return fallbackHtml || "<p>Your OTP code is ready.</p>";
 };
 
-const logError = (event, error, metadata = {}) => {
-  console.error(
-    JSON.stringify({
-      level: "error",
-      event,
-      ...metadata,
-      code: typeof error?.code === "string" ? error.code : null,
-      status: typeof error?.status === "number" ? error.status : null,
-      message: typeof error?.message === "string" ? error.message : "Unknown error",
-      details: typeof error?.details === "string" ? error.details : null,
-    }),
-  );
+const createSendFailure = (cause) => {
+  const error = new Error("Unable to send OTP. Please try again later.");
+  error.code = "EMAIL_OTP_DELIVERY_FAILED";
+  error.status = 503;
+  error.cause = cause;
+  return error;
 };
 
-const ensureResendConfigured = () => {
-  if (!env.authEmailOtpResendApiKey) {
-    const error = new Error("Email OTP provider API key is not configured.");
-    error.code = "CONFIG_EMAIL_OTP_PROVIDER_MISSING";
-    throw error;
+let transporter;
+
+const getTransporter = () => {
+  if (transporter) {
+    return transporter;
   }
 
-  if (!env.authEmailOtpFromEmail) {
-    const error = new Error("Email OTP sender address is not configured.");
-    error.code = "CONFIG_EMAIL_OTP_PROVIDER_MISSING";
-    throw error;
-  }
-
-  const fromEmail = String(env.authEmailOtpFromEmail).trim();
-  if (!fromEmail.includes("@")) {
-    const error = new Error("Email OTP sender address is invalid.");
-    error.code = "CONFIG_EMAIL_OTP_SENDER_INVALID";
-    throw error;
-  }
-};
-
-const resend = new Resend(process.env.RESEND_API_KEY);
-
-const buildResendFromValue = () => {
-  const fromEmail = String(env.authEmailOtpFromEmail || "").trim();
-  const fromName = String(env.authEmailOtpFromName || "").trim();
-  return fromName ? `${fromName} <${fromEmail}>` : fromEmail;
-};
-
-const classifyResendFailure = (responseStatus, responseBody) => {
-  const responseText = String(responseBody || "").toLowerCase();
-
-  if (
-    responseText.includes("onboarding@resend.dev") ||
-    responseText.includes("verify your domain") ||
-    responseText.includes("verify your email") ||
-    responseText.includes("test mode") ||
-    responseText.includes("only send") ||
-    responseText.includes("restricted")
-  ) {
-    return "EMAIL_OTP_PROVIDER_RESTRICTED_TEST_SENDER";
-  }
-
-  if (responseStatus === 401 || responseStatus === 403) {
-    return "EMAIL_OTP_PROVIDER_AUTH_FAILED";
-  }
-
-  if (responseStatus === 400 && (responseText.includes("from") || responseText.includes("sender"))) {
-    return "CONFIG_EMAIL_OTP_SENDER_INVALID";
-  }
-
-  return "EMAIL_OTP_DELIVERY_FAILED";
-};
-
-const normalizeProviderErrorCode = (rawCode, statusCode, responseBody) => {
-  const classifiedCode = classifyResendFailure(statusCode, responseBody);
-  const normalizedRawCode = String(rawCode || "").trim().toLowerCase();
-
-  if (classifiedCode === "EMAIL_OTP_PROVIDER_RESTRICTED_TEST_SENDER") {
-    return classifiedCode;
-  }
-
-  if (statusCode === 401 || statusCode === 403) {
-    return "EMAIL_OTP_PROVIDER_AUTH_FAILED";
-  }
-
-  if (
-    normalizedRawCode === "unauthorized" ||
-    normalizedRawCode === "forbidden" ||
-    normalizedRawCode === "invalid_api_key" ||
-    normalizedRawCode === "invalid api key" ||
-    normalizedRawCode === "api key invalid"
-  ) {
-    return "EMAIL_OTP_PROVIDER_AUTH_FAILED";
-  }
-
-  if (
-    normalizedRawCode === "validation_error" ||
-    normalizedRawCode === "validation" ||
-    normalizedRawCode === "invalid_from" ||
-    normalizedRawCode === "invalid sender"
-  ) {
-    return "CONFIG_EMAIL_OTP_SENDER_INVALID";
-  }
-
-  if (classifiedCode && classifiedCode !== "EMAIL_OTP_DELIVERY_FAILED") {
-    return classifiedCode;
-  }
-
-  if (normalizedRawCode === "aborterror" || normalizedRawCode === "timeout") {
-    return "EMAIL_OTP_PROVIDER_NETWORK_FAILED";
-  }
-
-  return classifiedCode || "EMAIL_OTP_DELIVERY_FAILED";
-};
-
-const sendViaResend = async ({ to, subject, text, html, requestId }) => {
-  ensureResendConfigured();
-  const normalizedEmail = normalizeEmail(to);
-  console.log("email_send_attempt", normalizedEmail);
-
-  logInfo("email_send_attempt", {
-    provider: "resend",
-    requestId: requestId || null,
-    recipient: maskEmail(normalizedEmail),
-    subject,
+  transporter = nodemailer.createTransport({
+    host: env.smtpHost,
+    port: env.smtpPort,
+    secure: env.smtpSecure,
+    auth: {
+      user: env.smtpUser,
+      pass: env.smtpPass,
+    },
   });
 
+  return transporter;
+};
+
+export const sendEmail = async ({ to, subject: _subject, text, html, requestId }) => {
+  const recipient = normalizeEmail(to);
+  const fromAddress = String(process.env.EMAIL_FROM || env.authEmailOtpFromEmail || "").trim();
+  const otpCode = extractOtpCode({ text, html });
+  const timeoutMs = env.authEmailOtpSendTimeoutMs;
+
+  console.log("email_send_attempt", recipient);
+
+  if (!recipient || !recipient.includes("@") || !fromAddress || !fromAddress.includes("@")) {
+    const validationError = new Error("Invalid SMTP sender or recipient configuration.");
+    validationError.code = "EMAIL_OTP_DELIVERY_FAILED";
+    console.error("email_send_failure", validationError);
+    throw createSendFailure(validationError);
+  }
+
   let timeoutId;
-  const sendPromise = resend.emails.send({
-    from: buildResendFromValue(),
-    to: normalizedEmail,
-    subject,
-    text,
-    html,
+  const mailPromise = getTransporter().sendMail({
+    from: fromAddress,
+    to: recipient,
+    subject: "Your OTP Code",
+    text: text || (otpCode ? `Your OTP code is ${otpCode}.` : "Your OTP code is ready."),
+    html: buildOtpHtml(otpCode, html),
+    headers: requestId ? { "x-request-id": String(requestId) } : undefined,
   });
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
-      const timeoutError = new Error("Email provider request timed out.");
-      timeoutError.code = "EMAIL_OTP_PROVIDER_NETWORK_FAILED";
+      const timeoutError = new Error("SMTP send timed out.");
+      timeoutError.code = "EMAIL_OTP_DELIVERY_FAILED";
       reject(timeoutError);
-    }, env.authEmailOtpSendTimeoutMs);
+    }, timeoutMs);
   });
 
-  let result;
   try {
-    result = await Promise.race([sendPromise, timeoutPromise]);
+    await Promise.race([mailPromise, timeoutPromise]);
+    console.log("email_send_success");
   } catch (error) {
-    const statusCode = Number(error?.statusCode || error?.status || 0);
-    const providerCode = normalizeProviderErrorCode(error?.code || error?.name, statusCode, error?.message || "");
-    const sendError = new Error("Unable to deliver email OTP.");
-    sendError.code = providerCode;
-    sendError.status = statusCode || null;
-    sendError.details = typeof error?.message === "string" ? error.message : "";
-    sendError.cause = error;
     console.error("email_send_failure", error);
-    logError("email_send_failure", sendError, {
-      provider: "resend",
-      requestId: requestId || null,
-      recipient: maskEmail(normalizedEmail),
-    });
-    throw sendError;
+    throw createSendFailure(error);
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
   }
-
-  if (result?.error) {
-    const error = new Error("Unable to deliver email OTP.");
-    const resendStatus = Number(result.error.statusCode || 0);
-    error.code = normalizeProviderErrorCode(result.error.code, resendStatus, result.error.message || "");
-    error.status = resendStatus || null;
-    error.details = result.error.message || "";
-    console.error("email_send_failure", result.error);
-    logError("email_send_failure", error, {
-      provider: "resend",
-      requestId: requestId || null,
-      recipient: maskEmail(normalizedEmail),
-      responseStatus: resendStatus || null,
-    });
-    throw error;
-  }
-
-  console.log("email_send_success", result);
-  logInfo("email_send_success", {
-    provider: "resend",
-    requestId: requestId || null,
-    recipient: maskEmail(normalizedEmail),
-    subject,
-  });
-};
-
-export const sendEmail = async ({ to, subject, text, html, requestId }) => {
-  const provider = env.authEmailProvider;
-
-  if (provider === "resend") {
-    await sendViaResend({ to, subject, text, html, requestId });
-    return;
-  }
-
-  const error = new Error(`Unsupported email provider: ${provider}`);
-  error.code = "CONFIG_EMAIL_OTP_PROVIDER_MISSING";
-  throw error;
 };

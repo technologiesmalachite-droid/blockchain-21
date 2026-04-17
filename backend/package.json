@@ -25,6 +25,7 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
+    "nodemailer": "^8.0.5",
     "otplib": "^12.0.1",
     "pg": "^8.13.1",
     "qrcode": "^1.5.4",
